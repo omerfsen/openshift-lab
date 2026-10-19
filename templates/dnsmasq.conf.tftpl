@@ -1,0 +1,34 @@
+# Cluster DNS. Everything outside ${cluster_domain} is forwarded upstream.
+#
+# The wildcard is the reason this VM exists: libvirt's own <dns> element can
+# express host records but not *.apps, and every route the cluster publishes
+# lives under that wildcard.
+
+# bind-dynamic, not bind-interfaces: it binds addresses as they appear instead
+# of failing at start if the interface is not up yet, and it needs no interface
+# NAME, which a cloud image does not reliably give you.
+bind-dynamic
+listen-address=${listen_address},127.0.0.1
+
+domain-needed
+bogus-priv
+no-resolv
+no-hosts
+expand-hosts
+domain=${cluster_domain}
+local=/${cluster_domain}/
+
+${upstream_servers}
+
+# The API, internal and external, both at the load balancer in front of this
+# file. api-int is what the nodes themselves use; api is what you use.
+host-record=api.${cluster_domain},${lb_address}
+host-record=api-int.${cluster_domain},${lb_address}
+
+# Every route the cluster creates - console, oauth, and anything an operator
+# publishes - resolves here.
+address=/apps.${cluster_domain}/${lb_address}
+
+# Node records, forward and reverse. A node whose PTR does not resolve shows up
+# with the wrong name in `oc get nodes`.
+${node_records}

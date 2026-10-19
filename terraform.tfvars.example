@@ -1,0 +1,105 @@
+# Copy to terraform.tfvars and edit. Every variable is required: there are no
+# defaults in variables.tf, so a value you forget fails at plan time instead of
+# quietly taking one buried in the code.
+#
+# This repo's .gitignore excludes *.tfvars, so terraform.tfvars stays local -
+# which is what you want, since it holds the pull secret.
+
+# ── hypervisor ──────────────────────────────────────────────────────────────
+# Must be local. The provider writes Ignition files onto the machine running
+# Terraform and libvirtd reads them from there, so this stack runs on the
+# hypervisor itself.
+libvirt_uri = "qemu:///system"
+pool        = "default"
+
+# ── cluster ─────────────────────────────────────────────────────────────────
+cluster_name = "ocp"
+base_domain  = "lab.local"
+ocp_version  = "4.22.19"
+
+# From https://console.redhat.com/openshift/install/pull-secret - a free
+# Red Hat account is enough. Keep it on one line.
+pull_secret = "{\"auths\":{...}}"
+
+ssh_authorized_keys = [
+  "ssh-ed25519 AAAA... you@host",
+]
+
+cluster_network_cidr        = "10.128.0.0/14"
+cluster_network_host_prefix = 23
+service_network_cidr        = "172.30.0.0/16"
+network_type                = "OVNKubernetes"
+fips                        = false
+
+# ── machine network ─────────────────────────────────────────────────────────
+# A dedicated network, so the cluster's DNS and addressing cannot collide with
+# whatever else runs on the default one.
+machine_network_cidr = "192.168.126.0/24"
+network_name         = "ocp"
+network_bridge       = "virbr-ocp"
+gateway_ip           = "192.168.126.1"
+services_ip          = "192.168.126.2"
+
+# Where the services VM forwards anything outside the cluster domain.
+upstream_dns = ["1.1.1.1", "8.8.8.8"]
+
+# ── images ──────────────────────────────────────────────────────────────────
+# The bootimage only has to boot; the machine-config operator replaces it with
+# the payload's own RHCOS on first boot. 4.22.19 ships RHCOS 10.2.
+rhcos_image_url    = "https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.22/4.22.8/rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
+rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
+
+# Any EL9/EL10 cloud image with cloud-init. This one is AlmaLinux 10.2.
+services_image_url      = "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-10.2-20261012.0.x86_64.qcow2"
+services_image_capacity = 497876992
+
+image_cache_dir = "/var/lib/libvirt/images/cache"
+
+# Holds the installer, the generated Ignition configs and, after the install,
+# the kubeconfig and the kubeadmin password. Treat it as secret.
+work_dir = "/var/lib/openshift-upi/ocp"
+
+# ── nodes ───────────────────────────────────────────────────────────────────
+# A compact three-node cluster: no workers, control plane schedulable. Add
+# worker entries and set masters_schedulable = false for a standard layout.
+nodes = {
+  "bootstrap" = { role = "bootstrap", ip = "192.168.126.10" }
+  "master-0"  = { role = "master", ip = "192.168.126.11" }
+  "master-1"  = { role = "master", ip = "192.168.126.12" }
+  "master-2"  = { role = "master", ip = "192.168.126.13" }
+}
+
+# OpenShift 4.22 wants 16 GiB and 4 vCPU on a control plane node. Below that
+# the install does not fail cleanly, it just never converges.
+role_defaults = {
+  bootstrap = { memory = 16384, vcpu = 4, disk_size = 120 }
+  master    = { memory = 16384, vcpu = 4, disk_size = 120 }
+  worker    = { memory = 8192, vcpu = 2, disk_size = 120 }
+}
+
+masters_schedulable = true
+
+# ── node hardware ───────────────────────────────────────────────────────────
+cpu_mode         = "host-passthrough"
+machine_type     = "q35"
+firmware         = "bios"
+graphics         = "vnc"
+qemu_agent       = true
+shutdown_timeout = 60
+autostart        = false
+
+# ── services VM ─────────────────────────────────────────────────────────────
+manage_services_vm = true
+services_memory    = 2048
+services_vcpu      = 2
+services_disk_size = 20
+services_user      = "ocpadmin"
+
+# ── install ─────────────────────────────────────────────────────────────────
+run_installer     = true
+bootstrap_timeout = "45m"
+install_timeout   = "60m"
+
+# Flip to true and apply again once bootstrap-complete passes. That is the one
+# manual gate a user-provisioned install leaves you.
+destroy_bootstrap = false

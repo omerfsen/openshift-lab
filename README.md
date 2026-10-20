@@ -62,6 +62,96 @@ A compact three-node cluster is the default: three control plane nodes, no
 workers, `masters_schedulable = true`. Add `worker` entries to `nodes` and set
 `masters_schedulable = false` for a standard layout.
 
+## Getting in
+
+### The web console
+
+| | |
+|---|---|
+| URL | `https://console-openshift-console.apps.<cluster_name>.<base_domain>` |
+| username | `kubeadmin` |
+| password | `cat <work_dir>/install/auth/kubeadmin-password` |
+
+It works from anywhere that can route to `services_ip` and resolve the
+wildcard, so over a VPN that already carries the machine network there is
+nothing to forward or tunnel. Expect a certificate warning: the console uses
+the cluster's self-signed ingress certificate until you install a real one.
+
+The console and `authentication` operators come up late - during
+`install-complete`, after the control plane has pivoted off the bootstrap
+machine. Blank rows in `oc get co` before that are normal, not a fault.
+
+### The CLI
+
+```bash
+export KUBECONFIG=<work_dir>/install/auth/kubeconfig
+<work_dir>/tools/oc get co
+```
+
+`terraform output credentials` prints both paths and the exact `export` line.
+Treat the whole `auth/` directory as secret: it holds cluster-admin
+credentials, and `kubeadmin` never expires on its own.
+
+### SSH
+
+Two operating systems, so two users:
+
+| host | user | why |
+|---|---|---|
+| the nodes | **`core`** | RHCOS creates exactly one user, and the `sshKey` from `install-config.yaml` goes to it |
+| services VM | `services_user` (e.g. `ocpadmin`) | AlmaLinux, created by cloud-init |
+
+```bash
+ssh core@master0.<cluster_name>.<base_domain>
+ssh core@192.168.122.40
+```
+
+There is no account named after the cluster or the project; `ssh ocp@...`
+fails with `Permission denied (publickey)` because that user does not exist,
+not because the key is wrong.
+
+Rebuilding a node regenerates its host keys, so a later connection to a
+reused address warns that the host identification changed. `ssh-keygen -R
+<address>` clears it - expected after a rebuild.
+
+### Reading a node's console
+
+Every domain gets a serial console, which is the only way in before SSH
+exists - and the only place the Ignition verdict is printed:
+
+```bash
+virsh console master0          # Ctrl-] to exit
+```
+
+Only one client can hold it at a time, so a forgotten `virsh console` blocks
+the next one. For a boot you can read afterwards, give the domain a serial log
+instead:
+
+```xml
+<serial type='pty'>
+  <log file='/var/log/libvirt/serial/master0.log' append='off'/>
+</serial>
+```
+
+### Expected noise, not errors
+
+On the `config-drive` delivery each node logs, on first boot:
+
+```
+Ignition: fetching configuration for http://169.254.169.254/openstack/latest/user_data: unable to fetch resource in time
+```
+
+That is the `openstack` platform trying the cloud metadata service as well as
+the config drive, because on a real OpenStack cloud either may be present.
+There is no metadata service on libvirt, the attempt times out, and Ignition
+falls back to the drive. The line that matters is the one above it:
+
+```
+Ignition: user-provided config was applied
+```
+
+It costs a few seconds per first boot and nothing else.
+
 ## How Ignition reaches a node
 
 RHCOS has no cloud-init. Everything a node is — its hostname, its address, its

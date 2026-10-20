@@ -17,15 +17,19 @@ ssh_pwauth: false
 disable_root: true
 
 packages:
+%{ if manage_dns ~}
   - dnsmasq
+%{ endif ~}
   - haproxy
   - bind-utils
 
 write_files:
+%{ if manage_dns ~}
   - path: /etc/dnsmasq.d/${cluster_name}.conf
     permissions: '0644'
     content: |
       ${indent(6, dnsmasq_conf)}
+%{ endif ~}
 
   - path: /etc/haproxy/haproxy.cfg
     permissions: '0644'
@@ -43,8 +47,13 @@ runcmd:
   # The cloud image ships no firewalld, but a rebuild from a different base
   # might; the cluster install fails in confusing ways behind a closed 22623.
   - systemctl disable --now firewalld 2>/dev/null || true
-  # dnsmasq answers for the cluster domain; the VM itself still resolves
-  # through it, so NetworkManager must not overwrite resolv.conf afterwards.
+%{ if manage_dns ~}
   - systemctl enable --now dnsmasq
+%{ endif ~}
   - systemctl enable --now haproxy
+%{ if manage_dns ~}
   - systemctl is-active dnsmasq haproxy
+%{ else ~}
+  # No dnsmasq: the cluster zone is held off this VM, so it only load balances.
+  - systemctl is-active haproxy
+%{ endif ~}

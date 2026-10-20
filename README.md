@@ -21,7 +21,7 @@ Ignition configs and a list of things that must already exist:
 |---|---|
 | machines running RHCOS, each with the right Ignition config | `modules/node`, one call per entry in `nodes` |
 | static addressing, since there is no cloud metadata service | a NetworkManager keyfile merged into each node's Ignition |
-| `api`, `api-int` and `*.apps` DNS | dnsmasq on the services VM |
+| `api`, `api-int` and `*.apps` DNS | your own zone, or dnsmasq on the services VM - see below |
 | a load balancer on 6443, 22623, 80 and 443 | haproxy on the services VM |
 | the bootstrap node removed once it is done | `destroy_bootstrap = true`, then apply |
 
@@ -95,7 +95,42 @@ to it - and no config is re-rendered at the most fragile moment of the install.
 the machine-config operator then replaces it with the release payload's own
 RHCOS - 10.2, i.e. RHEL 10 based, for 4.22.19.
 
-## Bringing your own DNS and load balancer
+## Where the cluster's DNS lives
+
+Three choices, set with `manage_cluster_dns` and `cluster_dns_forward_to`.
+
+**Your existing DNS holds the zone** (`manage_cluster_dns = false`). The
+services VM becomes a load balancer and nothing else - no dnsmasq package, no
+config, no service. Add three records at whatever already serves the domain,
+all pointing at `services_ip`:
+
+| record | type | value |
+|---|---|---|
+| `api.<cluster>.<base_domain>` | A | the services VM |
+| `api-int.<cluster>.<base_domain>` | A | the services VM |
+| `*.apps.<cluster>.<base_domain>` | A | the services VM |
+
+`api` and `api-int` point at the load balancer, never at a master: during
+bootstrapping its backend list includes the bootstrap node, which is the whole
+reason it is there. Node A records and their PTRs are optional but worth
+adding - a node whose PTR does not resolve shows up under the wrong name in
+`oc get nodes`.
+
+Then `node_nameserver` must be a resolver that can see those records.
+`192.168.126.1` - the cluster network's own libvirt dnsmasq, which forwards
+upstream - is usually the right answer, and means this stack runs no DNS at all.
+
+**A BIND or similar you already run** (`manage_cluster_dns = true`,
+`cluster_dns_forward_to = "<ip>#<port>"`). The services VM forwards the cluster
+domain there instead of answering for it, so the zone stays in one place and
+outlives the VM. Nodes point at the services VM.
+
+**Self-contained** (`manage_cluster_dns = true`, `cluster_dns_forward_to = ""`).
+dnsmasq on the services VM is authoritative for the domain, including the
+`*.apps` wildcard. Nothing outside the stack is needed, and `terraform destroy`
+takes the DNS with it.
+
+## Bringing your own load balancer too
 
 Set `manage_services_vm = false` and point `services_ip` at your own. The
 `dns_records` output lists exactly what has to resolve, and the load balancer

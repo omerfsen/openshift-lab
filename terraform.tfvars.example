@@ -31,11 +31,20 @@ service_network_cidr        = "172.30.0.0/16"
 network_type                = "OVNKubernetes"
 fips                        = false
 
-# Where the cluster domain is authoritative. Empty string: the services VM's
-# dnsmasq answers for it itself. Set to "<ip>#<port>" and it forwards the
-# cluster domain there instead, which is what you want when a BIND you already
-# run holds the zone - one source of truth, and the records outlive the VM.
-cluster_dns_forward_to = "192.168.122.1#5353"
+# The cluster zone lives at the DNS provider that already serves this domain,
+# so the services VM is a load balancer and nothing else. The records needed
+# are in README.md; all three point at services_ip.
+#
+# Set manage_cluster_dns = true instead to have the VM answer for the domain
+# itself (cluster_dns_forward_to = "") or forward it to a BIND you run
+# (cluster_dns_forward_to = "192.168.122.1#5353").
+manage_cluster_dns     = false
+cluster_dns_forward_to = ""
+
+# Must resolve api-int before the control plane exists. 192.168.126.1 is the
+# cluster network's own libvirt dnsmasq, which forwards upstream - so it picks
+# up the public records without this stack running any DNS at all.
+node_nameserver = "192.168.126.1"
 
 # ── machine network ─────────────────────────────────────────────────────────
 # A dedicated network, so the cluster's DNS and addressing cannot collide with

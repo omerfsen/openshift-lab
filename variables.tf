@@ -94,8 +94,28 @@ variable "services_ip" {
   type        = string
 }
 
+variable "manage_cluster_dns" {
+  description = <<-EOT
+    Run dnsmasq on the services VM to answer for the cluster domain. Set false
+    when the zone lives somewhere else - a public zone at your DNS provider, or
+    a BIND you already run - and the services VM is then a load balancer and
+    nothing more.
+  EOT
+  type        = bool
+}
+
 variable "cluster_dns_forward_to" {
-  description = "Where the cluster domain is authoritative. Empty string leaves the services VM answering for it; \"<ip>#<port>\" forwards the whole cluster domain there instead, for a BIND you already run."
+  description = "Only read when manage_cluster_dns is true. Empty string makes the services VM authoritative for the cluster domain; \"<ip>#<port>\" makes it forward that domain there instead."
+  type        = string
+}
+
+variable "node_nameserver" {
+  description = <<-EOT
+    Resolver the nodes are given, in their Ignition NetworkManager keyfile. It
+    must resolve api-int.<cluster>.<base_domain> before the control plane
+    exists, so: the services VM when it serves DNS, the libvirt network's own
+    gateway when the zone is public, or any resolver that can see the records.
+  EOT
   type        = string
 }
 

@@ -44,7 +44,7 @@ locals {
     ingress_https_backends = local.backends.ingress_https
   })
 
-  dnsmasq_conf = templatefile("${path.module}/templates/dnsmasq.conf.tftpl", {
+  dnsmasq_conf = !var.manage_cluster_dns ? "" : templatefile("${path.module}/templates/dnsmasq.conf.tftpl", {
     cluster_domain   = local.cluster_domain
     listen_address   = var.services_ip
     lb_address       = var.services_ip
@@ -54,6 +54,7 @@ locals {
   })
 
   services_user_data = templatefile("${path.module}/templates/services-user-data.yaml.tftpl", {
+    manage_dns     = var.manage_cluster_dns
     hostname       = local.services_name
     cluster_name   = var.cluster_name
     cluster_domain = local.cluster_domain

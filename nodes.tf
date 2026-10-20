@@ -18,7 +18,7 @@ module "node" {
   ip         = each.value.ip
   prefix     = local.prefix
   gateway    = var.gateway_ip
-  nameserver = var.services_ip
+  nameserver = var.node_nameserver
 
   memory    = coalesce(each.value.memory, var.role_defaults[each.value.role].memory)
   vcpu      = coalesce(each.value.vcpu, var.role_defaults[each.value.role].vcpu)

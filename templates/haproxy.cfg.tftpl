@@ -1,0 +1,62 @@
+# Load balancer for a user-provisioned install.
+#
+# 6443 and 22623 must include the bootstrap node until bootstrapping finishes:
+# the control plane fetches its own machine config from the bootstrap node
+# through 22623 before it can serve 22623 itself. Once bootstrap-complete
+# passes, set destroy_bootstrap and re-apply to remove the machine. This file
+# keeps listing it: once it is gone the check fails, haproxy marks the backend
+# DOWN and stops sending to it, which reaches the same end state without
+# re-rendering a config and reloading at the most fragile point of the install.
+#
+# The checks are plain TCP connects. Every one of these ports speaks TLS, so an
+# httpchk needs check-ssl and a disabled verify to say anything at all, and a
+# half-configured health check that reports everything DOWN is worse than a
+# connect check that is merely optimistic.
+
+global
+    log         127.0.0.1 local2
+    maxconn     4000
+    daemon
+
+defaults
+    mode                    tcp
+    log                     global
+    option                  tcplog
+    option                  dontlognull
+    retries                 3
+    timeout connect         10s
+    timeout client          5m
+    timeout server          5m
+    timeout check           10s
+    maxconn                 3000
+
+listen stats
+    bind *:9000
+    mode http
+    stats enable
+    stats uri /
+    stats refresh 10s
+
+# Kubernetes API
+listen api
+    bind *:6443
+    balance roundrobin
+${api_backends}
+
+# Machine config server. Nothing but the nodes talks to this.
+listen machine-config
+    bind *:22623
+    balance roundrobin
+${mcs_backends}
+
+# Ingress. Points at whatever runs the router: the workers, or the control
+# plane when it is schedulable and there are none.
+listen ingress-http
+    bind *:80
+    balance roundrobin
+${ingress_http_backends}
+
+listen ingress-https
+    bind *:443
+    balance roundrobin
+${ingress_https_backends}

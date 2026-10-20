@@ -1,0 +1,59 @@
+#cloud-config
+hostname: ${hostname}
+fqdn: ${hostname}.${cluster_domain}
+prefer_fqdn_over_hostname: true
+timezone: ${timezone}
+
+users:
+  - name: ${username}
+    groups: [adm, wheel]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      ${indent(6, ssh_keys)}
+
+ssh_pwauth: false
+disable_root: true
+
+packages:
+%{ if manage_dns ~}
+  - dnsmasq
+%{ endif ~}
+  - haproxy
+  - bind-utils
+
+write_files:
+%{ if manage_dns ~}
+  - path: /etc/dnsmasq.d/${cluster_name}.conf
+    permissions: '0644'
+    content: |
+      ${indent(6, dnsmasq_conf)}
+%{ endif ~}
+
+  - path: /etc/haproxy/haproxy.cfg
+    permissions: '0644'
+    content: |
+      ${indent(6, haproxy_cfg)}
+
+runcmd:
+  # haproxy binds 6443, 22623 and 9000, none of which are in its SELinux port
+  # type. Without this it starts and then fails every bind, which looks like a
+  # firewall problem and is not.
+  - setsebool -P haproxy_connect_any 1
+  - semanage port -a -t http_port_t -p tcp 6443 2>/dev/null || true
+  - semanage port -a -t http_port_t -p tcp 22623 2>/dev/null || true
+  - semanage port -a -t http_port_t -p tcp 9000 2>/dev/null || true
+  # The cloud image ships no firewalld, but a rebuild from a different base
+  # might; the cluster install fails in confusing ways behind a closed 22623.
+  - systemctl disable --now firewalld 2>/dev/null || true
+%{ if manage_dns ~}
+  - systemctl enable --now dnsmasq
+%{ endif ~}
+  - systemctl enable --now haproxy
+%{ if manage_dns ~}
+  - systemctl is-active dnsmasq haproxy
+%{ else ~}
+  # No dnsmasq: the cluster zone is held off this VM, so it only load balances.
+  - systemctl is-active haproxy
+%{ endif ~}

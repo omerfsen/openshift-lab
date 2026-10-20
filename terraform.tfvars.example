@@ -1,0 +1,167 @@
+# Copy to terraform.tfvars and edit. Every variable is required: there are no
+# defaults in variables.tf, so a value you forget fails at plan time instead of
+# quietly taking one buried in the code.
+#
+# This repo's .gitignore excludes *.tfvars, so terraform.tfvars stays local -
+# which is what you want, since it holds the pull secret.
+
+# ── hypervisor ──────────────────────────────────────────────────────────────
+# Must be local. The provider writes Ignition files onto the machine running
+# Terraform and libvirtd reads them from there, so this stack runs on the
+# hypervisor itself.
+libvirt_uri = "qemu:///system"
+
+# Where the disks land. Check it has room: four nodes at disk_size each, thin,
+# plus the services VM and the decompressed bootimage.
+pool = "default"
+
+# ── cluster ─────────────────────────────────────────────────────────────────
+cluster_name = "ocp"
+base_domain  = "serra.pw"
+ocp_version  = "4.22.18"
+
+# From https://console.redhat.com/openshift/install/pull-secret - a free
+# Red Hat account is enough. Keep it on one line.
+pull_secret = "{\"auths\":{...}}"
+
+ssh_authorized_keys = [
+  "ssh-ed25519 AAAA... you@host",
+]
+
+cluster_network_cidr        = "10.128.0.0/14"
+cluster_network_host_prefix = 23
+service_network_cidr        = "172.30.0.0/16"
+network_type                = "OVNKubernetes"
+fips                        = false
+
+# The cluster zone lives at the DNS provider that already serves this domain,
+# so the services VM is a load balancer and nothing else. The records needed
+# are in README.md; all three point at services_ip.
+#
+# Set manage_cluster_dns = true instead to have the VM answer for the domain
+# itself (cluster_dns_forward_to = "") or forward it to a BIND you run
+# (cluster_dns_forward_to = "192.168.122.1#5353").
+manage_cluster_dns     = false
+cluster_dns_forward_to = ""
+
+# Must resolve api-int before the control plane exists. 192.168.126.1 is the
+# cluster network's own libvirt dnsmasq, which forwards upstream - so it picks
+# up the public records without this stack running any DNS at all.
+node_nameserver = "192.168.122.1"
+
+# TTL for the records in the generated zone file.
+dns_ttl = 300
+
+# ── machine network ─────────────────────────────────────────────────────────
+# Joining the network that already exists, rather than making a new one: it is
+# already routed to wherever you work from, so there is no route to push, no
+# bridge to add and no firewall rule to touch. Set create_network = true and
+# give it its own CIDR to have this stack build and own one instead.
+create_network       = false
+machine_network_cidr = "192.168.122.0/24"
+network_name         = "default"
+network_bridge       = ""
+gateway_ip           = "192.168.122.1"
+
+# The load balancer. api, api-int and *.apps all resolve here. Keep it clear of
+# the network's DHCP range and of any address a defined-but-stopped VM claims.
+services_ip = "192.168.122.60"
+
+# Where the services VM forwards anything outside the cluster domain.
+upstream_dns = ["1.1.1.1", "8.8.8.8"]
+
+# ── images ──────────────────────────────────────────────────────────────────
+# How each node gets its Ignition config. "config-drive" is the default
+# because it works everywhere; "fw_cfg" is fewer moving parts but only works
+# if the HOST's QEMU exposes fw_cfg to guests, which QEMU 6.2 on Ubuntu 22.04
+# does not. See README.md, "How Ignition reaches a node".
+#
+# The bootimage below must match: openstack for config-drive, qemu for fw_cfg.
+# A precondition checks the pairing before anything is created.
+ignition_delivery = "config-drive"
+
+# 4.22.8, not 4.22.18 - bootimages are versioned separately and 4.22.8 is the
+# NEWEST one the 4.22 stream has (4.22.18 does not exist). The installer pins
+# it by checksum under yet another name, 9.8.20260715-1. See README.md,
+# "Three versions, and why they disagree", before changing this.
+rhcos_image_url    = "https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.22/4.22.8/rhcos-4.22.8-x86_64-openstack.x86_64.qcow2.gz"
+rhcos_image_sha256 = "6c09f73c238fbcc9a4fdb86de1af4bb66227c9d9b44a391606ec88bfb8d1bf7e"
+
+# For ignition_delivery = "fw_cfg" use these instead:
+#   rhcos_image_url    = ".../rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
+#   rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
+
+# Any EL9/EL10 cloud image with cloud-init. This one is AlmaLinux 10.2.
+services_image_url      = "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-10.2-20261012.0.x86_64.qcow2"
+services_image_capacity = 497876992
+
+# On the same filesystem as the pool, not the root disk.
+image_cache_dir = "/data/vms/cache"
+
+# Holds the installer, the generated Ignition configs and, after the install,
+# the kubeconfig and the kubeadmin password. Treat it as secret.
+work_dir = "/data/vms/openshift-upi/ocp"
+
+# ── nodes ───────────────────────────────────────────────────────────────────
+# A compact three-node cluster: no workers, control plane schedulable. Add
+# worker entries and set masters_schedulable = false for a standard layout.
+# The key is the machine's name: its libvirt domain, its hostname, and the DNS
+# record it needs. Keep them matching what the zone already says.
+nodes = {
+  "bootstrap" = { role = "bootstrap", ip = "192.168.122.39" }
+
+  # mac is optional on every node. Left out, it is derived from the node name
+  # and is stable across a destroy and rebuild. Set it when something else
+  # already knows the number - a DHCP reservation, a switch ACL, an inventory.
+  # master0 shows the form; the other two take the derived address.
+  #
+  # Control plane nodes carry no `enabled`: a cluster is 1 or 3 masters and a
+  # validation enforces it, so there is nothing to switch off.
+  "master0" = { role = "master", ip = "192.168.122.40", mac = "52:54:00:ab:cd:ef" }
+  "master1" = { role = "master", ip = "192.168.122.41" }
+  "master2" = { role = "master", ip = "192.168.122.42" }
+
+  # Written, not built. A compact cluster runs everything on the control plane
+  # (masters_schedulable = true), which is the right shape for a lab and costs
+  # three fewer machines. Flip one to enabled = true and re-apply to add it -
+  # start with worker0 alone, it is the cheapest way to exercise the path.
+  # A new worker also needs its CSRs approved; see README.md, "Adding a worker".
+  "worker0" = { role = "worker", ip = "192.168.122.50", enabled = false }
+  "worker1" = { role = "worker", ip = "192.168.122.51", enabled = false }
+  "worker2" = { role = "worker", ip = "192.168.122.52", enabled = false }
+}
+
+# OpenShift 4.22 wants 16 GiB and 4 vCPU on a control plane node. Below that
+# the install does not fail cleanly, it just never converges.
+role_defaults = {
+  bootstrap = { memory = 16384, vcpu = 4, disk_size = 120 }
+  master    = { memory = 16384, vcpu = 4, disk_size = 120 }
+  worker    = { memory = 8192, vcpu = 2, disk_size = 120 }
+}
+
+masters_schedulable = true
+
+# ── node hardware ───────────────────────────────────────────────────────────
+cpu_mode         = "host-passthrough"
+machine_type     = "q35"
+firmware         = "bios"
+graphics         = "vnc"
+qemu_agent       = true
+shutdown_timeout = 60
+autostart        = false
+
+# ── services VM ─────────────────────────────────────────────────────────────
+manage_services_vm = true
+services_memory    = 2048
+services_vcpu      = 2
+services_disk_size = 20
+services_user      = "ocpadmin"
+
+# ── install ─────────────────────────────────────────────────────────────────
+run_installer     = true
+bootstrap_timeout = "45m"
+install_timeout   = "60m"
+
+# Flip to true and apply again once bootstrap-complete passes. That is the one
+# manual gate a user-provisioned install leaves you.
+destroy_bootstrap = false

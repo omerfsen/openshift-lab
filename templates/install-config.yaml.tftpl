@@ -1,0 +1,36 @@
+apiVersion: v1
+baseDomain: ${base_domain}
+metadata:
+  name: ${cluster_name}
+
+# platform: none is what makes this a user-provisioned install: the installer
+# creates no machines and expects the DNS records and the load balancer to
+# exist already. Everything else in this stack is there to satisfy that.
+platform:
+  none: {}
+
+controlPlane:
+  name: master
+  replicas: ${master_replicas}
+  hyperthreading: Enabled
+
+compute:
+- name: worker
+  replicas: ${worker_replicas}
+  hyperthreading: Enabled
+
+networking:
+  networkType: ${network_type}
+  machineNetwork:
+  - cidr: ${machine_network_cidr}
+  clusterNetwork:
+  - cidr: ${cluster_network_cidr}
+    hostPrefix: ${host_prefix}
+  serviceNetwork:
+  - ${service_network_cidr}
+
+fips: ${fips}
+
+pullSecret: ${pull_secret}
+sshKey: |
+  ${ssh_key}

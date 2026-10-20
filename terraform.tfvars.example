@@ -17,7 +17,7 @@ pool = "default"
 
 # ── cluster ─────────────────────────────────────────────────────────────────
 cluster_name = "ocp"
-base_domain  = "serra.pw"
+base_domain  = "example.com"
 ocp_version  = "4.22.18"
 
 # From https://console.redhat.com/openshift/install/pull-secret - a free

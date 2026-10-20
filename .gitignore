@@ -42,3 +42,12 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+# A saved plan embeds every variable value, including the pull secret.
+*tfplan*
+
+# Credentials that live next to a lab like this one.
+pull-secret*.json
+*.ign
+auth/
+kubeconfig
+kubeadmin-password

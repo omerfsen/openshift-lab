@@ -74,13 +74,23 @@ variable "machine_network_cidr" {
   type        = string
 }
 
+variable "create_network" {
+  description = <<-EOT
+    Create a dedicated libvirt network for this cluster. False joins one that
+    already exists, which is usually right when that network is already routed
+    to wherever you work from - nothing new to route, firewall or tear down.
+    A joined network is never destroyed by this stack.
+  EOT
+  type        = bool
+}
+
 variable "network_name" {
-  description = "Name of the libvirt network to create for this cluster."
+  description = "The libvirt network: created when create_network is true, otherwise one that already exists."
   type        = string
 }
 
 variable "network_bridge" {
-  description = "Bridge device name for that network. Must be unique on the host and <= 15 characters."
+  description = "Bridge device for a created network; ignored when joining one. Must be unique on the host and <= 15 characters."
   type        = string
 }
 
@@ -107,6 +117,11 @@ variable "manage_cluster_dns" {
 variable "cluster_dns_forward_to" {
   description = "Only read when manage_cluster_dns is true. Empty string makes the services VM authoritative for the cluster domain; \"<ip>#<port>\" makes it forward that domain there instead."
   type        = string
+}
+
+variable "dns_ttl" {
+  description = "TTL on the generated zone records. Keep it short while the cluster is being built; a stale cached answer for api is a confusing way to lose an afternoon."
+  type        = number
 }
 
 variable "node_nameserver" {

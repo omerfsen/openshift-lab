@@ -1,4 +1,7 @@
-# A dedicated network per cluster, NAT to the outside.
+# A dedicated network per cluster, NAT to the outside - when this stack owns
+# the network at all. Joining an existing one is often better: a network your
+# VPN or your office already routes needs no new route, no firewall change and
+# no bridge, and the cluster is simply a tenant on it.
 #
 # DHCP is deliberately absent. Every node is addressed statically from its
 # Ignition config, so there is no lease to expire mid-install and no dependency
@@ -7,6 +10,8 @@
 # *.apps record in particular, which libvirt's <dns> cannot express - is
 # answered by dnsmasq on the services VM.
 resource "libvirt_network" "cluster" {
+  count = var.create_network ? 1 : 0
+
   name      = var.network_name
   autostart = true
 
@@ -46,4 +51,10 @@ resource "libvirt_network" "cluster" {
       ],
     )
   }
+}
+
+locals {
+  # The one place the rest of the stack asks "which network?", so joining and
+  # creating look identical everywhere else.
+  network = var.create_network ? libvirt_network.cluster[0].name : var.network_name
 }

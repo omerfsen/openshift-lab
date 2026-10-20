@@ -176,7 +176,7 @@ resource "libvirt_domain" "services" {
     interfaces = [{
       mac    = { address = local.services_mac }
       model  = { type = "virtio" }
-      source = { network = { network = libvirt_network.cluster.name } }
+      source = { network = { network = local.network } }
     }]
 
     serials  = [{ target = { port = 0 } }]

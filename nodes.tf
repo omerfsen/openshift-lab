@@ -12,7 +12,7 @@ module "node" {
   pool           = var.pool
 
   base_volume_path = libvirt_volume.rhcos.path
-  network          = libvirt_network.cluster.name
+  network          = local.network
   ignition_base    = data.local_file.ignition[each.value.role].content
 
   ip         = each.value.ip

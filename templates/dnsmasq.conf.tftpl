@@ -1,8 +1,10 @@
-# Cluster DNS. Everything outside ${cluster_domain} is forwarded upstream.
+# Cluster DNS for the nodes. Everything outside ${cluster_domain} goes upstream.
 #
-# The wildcard is the reason this VM exists: libvirt's own <dns> element can
-# express host records but not *.apps, and every route the cluster publishes
-# lives under that wildcard.
+# This file exists because libvirt's own <dns> element can express host records
+# but not the *.apps wildcard every cluster route lives under, and the Terraform
+# libvirt provider does not expose the dnsmasq XML namespace that could.
+# Whether it ANSWERS for the cluster domain or forwards it on is
+# cluster_dns_forward_to.
 
 # bind-dynamic, not bind-interfaces: it binds addresses as they appear instead
 # of failing at start if the interface is not up yet, and it needs no interface
@@ -16,10 +18,20 @@ no-resolv
 no-hosts
 expand-hosts
 domain=${cluster_domain}
+%{ if forward_to == "" ~}
+# Only when this file IS the authority. With a forwarder configured, local=
+# would make dnsmasq answer NXDOMAIN for the whole zone instead of asking.
 local=/${cluster_domain}/
+%{ endif ~}
 
 ${upstream_servers}
 
+%{ if forward_to != "" ~}
+# The cluster domain is held somewhere else - a BIND that already runs on this
+# network - so this file does not answer for it, it asks. One source of truth
+# beats two that agree until they do not, and the records outlive this VM.
+server=/${cluster_domain}/${forward_to}
+%{ else ~}
 # The API, internal and external, both at the load balancer in front of this
 # file. api-int is what the nodes themselves use; api is what you use.
 host-record=api.${cluster_domain},${lb_address}
@@ -32,3 +44,4 @@ address=/apps.${cluster_domain}/${lb_address}
 # Node records, forward and reverse. A node whose PTR does not resolve shows up
 # with the wrong name in `oc get nodes`.
 ${node_records}
+%{ endif ~}

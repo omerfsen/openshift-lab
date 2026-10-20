@@ -94,6 +94,11 @@ variable "services_ip" {
   type        = string
 }
 
+variable "cluster_dns_forward_to" {
+  description = "Where the cluster domain is authoritative. Empty string leaves the services VM answering for it; \"<ip>#<port>\" forwards the whole cluster domain there instead, for a BIND you already run."
+  type        = string
+}
+
 variable "upstream_dns" {
   description = "Resolvers the services VM forwards everything outside the cluster domain to."
   type        = list(string)

@@ -48,6 +48,7 @@ locals {
     cluster_domain   = local.cluster_domain
     listen_address   = var.services_ip
     lb_address       = var.services_ip
+    forward_to       = var.cluster_dns_forward_to
     upstream_servers = join("\n", [for s in var.upstream_dns : "server=${s}"])
     node_records     = join("\n", [for name, n in var.nodes : "host-record=${name}.${local.cluster_domain},${n.ip}"])
   })

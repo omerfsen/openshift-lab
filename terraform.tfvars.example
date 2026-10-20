@@ -14,7 +14,7 @@ pool        = "default"
 
 # ── cluster ─────────────────────────────────────────────────────────────────
 cluster_name = "ocp"
-base_domain  = "lab.local"
+base_domain  = "serra.pw"
 ocp_version  = "4.22.19"
 
 # From https://console.redhat.com/openshift/install/pull-secret - a free
@@ -30,6 +30,12 @@ cluster_network_host_prefix = 23
 service_network_cidr        = "172.30.0.0/16"
 network_type                = "OVNKubernetes"
 fips                        = false
+
+# Where the cluster domain is authoritative. Empty string: the services VM's
+# dnsmasq answers for it itself. Set to "<ip>#<port>" and it forwards the
+# cluster domain there instead, which is what you want when a BIND you already
+# run holds the zone - one source of truth, and the records outlive the VM.
+cluster_dns_forward_to = "192.168.122.1#5353"
 
 # ── machine network ─────────────────────────────────────────────────────────
 # A dedicated network, so the cluster's DNS and addressing cannot collide with

@@ -141,6 +141,21 @@ variable "upstream_dns" {
 
 # ───────────────────────────────── images ─────────────────────────────────
 
+variable "ignition_delivery" {
+  description = <<-EOT
+    How each node receives its Ignition config: "config-drive" (an ISO the
+    guest mounts) or "fw_cfg" (QEMU's firmware config interface). The
+    bootimage must match - openstack for config-drive, qemu for fw_cfg - and
+    a precondition checks that. See README.md, "How Ignition reaches a node".
+  EOT
+  type        = string
+
+  validation {
+    condition     = contains(["config-drive", "fw_cfg"], var.ignition_delivery)
+    error_message = "ignition_delivery is \"config-drive\" or \"fw_cfg\"."
+  }
+}
+
 variable "rhcos_image_url" {
   description = "RHCOS qemu qcow2 for the bootimage. The mirror serves it gzipped; it is decompressed before upload."
   type        = string

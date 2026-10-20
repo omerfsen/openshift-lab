@@ -3,7 +3,20 @@
 # there. The Azure stack did the same with curl + gunzip in a null_resource,
 # but keyed on `always_run = timestamp()`, which re-downloaded 1.4 GB on every
 # single plan. This keys on the URL and checksum instead, so it runs once.
+# The bootimage and the delivery mechanism are not independent choices: the
+# kernel in each image hard-codes ignition.platform.id, which decides where
+# Ignition looks. Pairing them wrongly produces a node that boots cleanly with
+# no config at all, which is a slow and confusing way to fail.
 resource "terraform_data" "rhcos_image" {
+  lifecycle {
+    precondition {
+      condition = (
+        var.ignition_delivery == "config-drive" ? can(regex("openstack", var.rhcos_image_url)) : can(regex("qemu", var.rhcos_image_url))
+      )
+      error_message = "ignition_delivery = \"${var.ignition_delivery}\" needs the ${var.ignition_delivery == "config-drive" ? "openstack" : "qemu"} bootimage, but rhcos_image_url does not name it."
+    }
+  }
+
   triggers_replace = [var.rhcos_image_url, var.rhcos_image_sha256, local.rhcos_qcow2]
 
   provisioner "local-exec" {

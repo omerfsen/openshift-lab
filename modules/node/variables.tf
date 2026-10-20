@@ -103,3 +103,30 @@ variable "autostart" {
   description = "Start with the hypervisor."
   type        = bool
 }
+
+variable "ignition_delivery" {
+  description = <<-EOT
+    How the Ignition config reaches the guest.
+
+    "config-drive": an ISO labelled config-2 holding
+    openstack/latest/user_data, attached as a cdrom. Needs the **openstack**
+    bootimage, which boots with ignition.platform.id=openstack.
+
+    "fw_cfg": the config is passed through QEMU's firmware config interface
+    as opt/com.coreos/config. Needs the **qemu** bootimage. Fewer moving parts,
+    but the guest only sees it if the host's QEMU actually exposes fw_cfg -
+    QEMU 6.2 on Ubuntu 22.04 does not, and Ignition then reports
+    "QEMU firmware config was not found" and boots with no config at all.
+  EOT
+  type        = string
+
+  validation {
+    condition     = contains(["config-drive", "fw_cfg"], var.ignition_delivery)
+    error_message = "ignition_delivery is \"config-drive\" or \"fw_cfg\"."
+  }
+}
+
+variable "config_dir" {
+  description = "Directory on the hypervisor where per-node config drives are staged. Only used by the config-drive delivery."
+  type        = string
+}

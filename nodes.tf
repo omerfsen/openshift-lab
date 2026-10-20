@@ -11,6 +11,9 @@ module "node" {
   cluster_domain = local.cluster_domain
   pool           = var.pool
 
+  ignition_delivery = var.ignition_delivery
+  config_dir        = "${var.work_dir}/config-drives"
+
   base_volume_path = libvirt_volume.rhcos.path
   network          = local.network
   ignition_base    = data.local_file.ignition[each.value.role].content

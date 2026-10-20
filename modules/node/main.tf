@@ -51,6 +51,10 @@ locals {
     },
   ]
 
+  use_config_drive = var.ignition_delivery == "config-drive"
+  drive_dir        = "${var.config_dir}/${var.name}"
+  iso_path         = "${var.config_dir}/${var.name}-config.iso"
+
   base = jsondecode(var.ignition_base)
 
   # Merged, not replaced. master.ign and worker.ign are pointer configs with no
@@ -81,11 +85,62 @@ resource "libvirt_volume" "root" {
   }
 }
 
+# ─────────────────────── delivery 1: config drive ────────────────────────
+# An ISO labelled config-2 with the config at openstack/latest/user_data, which
+# is where Ignition looks when the image boots with
+# ignition.platform.id=openstack. It mounts the drive, reads the config and
+# unmounts it - visible in the console as `fetched user config from "openstack"`.
+resource "local_sensitive_file" "user_data" {
+  count = local.use_config_drive ? 1 : 0
+
+  filename        = "${local.drive_dir}/openstack/latest/user_data"
+  content         = local.ignition
+  file_permission = "0600"
+}
+
+resource "terraform_data" "config_drive" {
+  count = local.use_config_drive ? 1 : 0
+
+  triggers_replace = [local_sensitive_file.user_data[0].content_sha256]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-euo", "pipefail", "-c"]
+    command     = <<-EOT
+      command -v genisoimage >/dev/null || { echo "genisoimage is required for the config-drive delivery"; exit 1; }
+      # -r for Rock Ridge: without it the ISO only carries 8.3 names and the
+      # guest looks for openstack/latest/user_data, not OPENSTAC/LATEST/USER_DAT.
+      genisoimage -quiet -o '${local.iso_path}' -V config-2 -r -J '${local.drive_dir}'
+      test -s '${local.iso_path}'
+    EOT
+  }
+}
+
+resource "libvirt_volume" "config_drive" {
+  count = local.use_config_drive ? 1 : 0
+
+  name = "${var.name}-config.iso"
+  pool = var.pool
+
+  target = {
+    format = { type = "iso" }
+  }
+
+  create = {
+    content = { url = "file://${local.iso_path}" }
+  }
+
+  depends_on = [terraform_data.config_drive]
+}
+
+# ─────────────────────────── delivery 2: fw_cfg ──────────────────────────
 # Written to /tmp/terraform-provider-libvirt-ignition/ on the machine running
-# Terraform, and read from there by libvirtd when the domain starts. That is
-# why this stack has to run on the hypervisor, and why a host reboot between
-# apply and first boot needs a re-apply.
+# Terraform, and read from there by libvirtd when the domain starts. Whether
+# the GUEST ever sees it is a property of the host's QEMU, not of this config:
+# on QEMU 6.2 (Ubuntu 22.04) /sys/firmware/qemu_fw_cfg is empty in every guest
+# and Ignition boots with no config at all.
 resource "libvirt_ignition" "node" {
+  count = local.use_config_drive ? 0 : 1
+
   name    = "${var.name}.ign"
   content = local.ignition
 }
@@ -111,16 +166,16 @@ resource "libvirt_domain" "node" {
     mode = var.cpu_mode
   }
 
-  # How Ignition reaches a CoreOS guest on libvirt: the firmware exposes the
-  # file at opt/com.coreos/config and Ignition reads it in the initramfs on
-  # first boot. `value` is required by the schema but is dropped from the XML
-  # when `file` is set.
-  sys_info = [{
+  # Only the fw_cfg delivery puts anything here: the firmware exposes the file
+  # at opt/com.coreos/config and Ignition reads it in the initramfs on first
+  # boot. `value` is required by the schema but is dropped from the XML when
+  # `file` is set. The config-drive delivery attaches a cdrom instead, below.
+  sys_info = local.use_config_drive ? [] : [{
     fw_cfg = {
       entry = [{
         name  = "opt/com.coreos/config"
         value = ""
-        file  = libvirt_ignition.node.path
+        file  = libvirt_ignition.node[0].path
       }]
     }
   }]
@@ -131,12 +186,20 @@ resource "libvirt_domain" "node" {
   } : null
 
   devices = {
-    disks = [{
-      device = "disk"
-      driver = { name = "qemu", type = "qcow2" }
-      source = { file = { file = libvirt_volume.root.path } }
-      target = { dev = "vda", bus = "virtio" }
-    }]
+    disks = concat(
+      [{
+        device = "disk"
+        driver = { name = "qemu", type = "qcow2" }
+        source = { file = { file = libvirt_volume.root.path } }
+        target = { dev = "vda", bus = "virtio" }
+      }],
+      local.use_config_drive ? [{
+        device = "cdrom"
+        driver = { name = "qemu", type = "raw" }
+        source = { file = { file = libvirt_volume.config_drive[0].path } }
+        target = { dev = "sda", bus = "sata" }
+      }] : [],
+    )
 
     interfaces = [{
       mac    = { address = local.mac }

@@ -71,12 +71,25 @@ services_ip = "192.168.122.60"
 upstream_dns = ["1.1.1.1", "8.8.8.8"]
 
 # ── images ──────────────────────────────────────────────────────────────────
+# How each node gets its Ignition config. "config-drive" is the default
+# because it works everywhere; "fw_cfg" is fewer moving parts but only works
+# if the HOST's QEMU exposes fw_cfg to guests, which QEMU 6.2 on Ubuntu 22.04
+# does not. See README.md, "How Ignition reaches a node".
+#
+# The bootimage below must match: openstack for config-drive, qemu for fw_cfg.
+# A precondition checks the pairing before anything is created.
+ignition_delivery = "config-drive"
+
 # 4.22.8, not 4.22.18 - bootimages are versioned separately and 4.22.8 is the
 # NEWEST one the 4.22 stream has (4.22.18 does not exist). The installer pins
 # it by checksum under yet another name, 9.8.20260715-1. See README.md,
 # "Three versions, and why they disagree", before changing this.
-rhcos_image_url    = "https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.22/4.22.8/rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
-rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
+rhcos_image_url    = "https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.22/4.22.8/rhcos-4.22.8-x86_64-openstack.x86_64.qcow2.gz"
+rhcos_image_sha256 = "6c09f73c238fbcc9a4fdb86de1af4bb66227c9d9b44a391606ec88bfb8d1bf7e"
+
+# For ignition_delivery = "fw_cfg" use these instead:
+#   rhcos_image_url    = ".../rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
+#   rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
 
 # Any EL9/EL10 cloud image with cloud-init. This one is AlmaLinux 10.2.
 services_image_url      = "https://repo.almalinux.org/almalinux/10/cloud/x86_64/images/AlmaLinux-10-GenericCloud-10.2-20261012.0.x86_64.qcow2"

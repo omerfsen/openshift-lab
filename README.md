@@ -36,12 +36,12 @@ The point of this stack is that all of it is in `terraform destroy`.
 | `terraform.tfvars` | every value - the only file you normally edit, and gitignored |
 | `main.tf` | the locals that split `nodes` by role |
 | `network.tf` | the cluster's own libvirt network, NAT, no DHCP |
-| `images.tf` | fetch and decompress the RHCOS bootimage, upload it once |
+| `images.tf` | fetch and decompress the RHCOS bootimage, upload it once; checks it matches `ignition_delivery` |
 | `install.tf` | openshift-install, install-config.yaml, the Ignition configs, the waits |
 | `services.tf` | the DNS and load balancer VM |
 | `nodes.tf` | one `module.node` per machine |
 | `outputs.tf` | addresses, consoles, the DNS contract, where the kubeconfig landed |
-| `modules/node/` | one machine: overlay disk, merged Ignition, domain |
+| `modules/node/` | one machine: overlay disk, merged Ignition, its config drive or fw_cfg entry, the domain |
 | `templates/` | install-config, dnsmasq, haproxy, the services VM's cloud-init |
 
 Variables carry no defaults on purpose: a value you forgot fails at plan time
@@ -61,6 +61,82 @@ instead of quietly taking one that was buried in the code.
 A compact three-node cluster is the default: three control plane nodes, no
 workers, `masters_schedulable = true`. Add `worker` entries to `nodes` and set
 `masters_schedulable = false` for a standard layout.
+
+## How Ignition reaches a node
+
+RHCOS has no cloud-init. Everything a node is — its hostname, its address, its
+SSH keys, the entire control plane on the bootstrap machine — arrives as one
+Ignition config read once, on first boot. If it does not arrive, the node still
+boots perfectly: a login prompt, a DHCP address, a hostname taken from the
+lease, and nothing of yours. **That is the failure mode to recognise**, because
+nothing errors.
+
+The console tells you which happened:
+
+```
+Ignition: no config provided by user                      <- it arrived with nothing
+fetched user config from "openstack"                      <- it worked
+```
+
+Two mechanisms, set with `ignition_delivery`. They are not interchangeable at
+runtime: each RHCOS bootimage hard-codes `ignition.platform.id` in its kernel
+arguments, which decides where Ignition looks. A precondition refuses to build
+anything if the pair does not match.
+
+| | `config-drive` (default) | `fw_cfg` |
+|---|---|---|
+| bootimage | **openstack** | **qemu** |
+| `ignition.platform.id` | `openstack` | `qemu` |
+| how it travels | an ISO labelled `config-2`, attached as a cdrom | QEMU's firmware config interface |
+| where the guest reads it | `openstack/latest/user_data` on the mounted ISO | `/sys/firmware/qemu_fw_cfg/by_name/opt/com.coreos/config` |
+| extra host tooling | `genisoimage` | none |
+| works on QEMU 6.2 / Ubuntu 22.04 | **yes** | **no** |
+
+### Why config-drive is the default
+
+`fw_cfg` is the tidier mechanism and the one the libvirt provider's own
+documentation shows: no ISO, no extra tool, one `<sysinfo type='fwcfg'>`
+element. It is the better choice when it works.
+
+It silently does not work on QEMU 6.2 as shipped in Ubuntu 22.04. Everything on
+the host looks right — libvirt emits the correct XML, the qemu command line
+carries `-fw_cfg name=opt/com.coreos/config,file=...`, the file is present and
+readable inside qemu's own mount namespace, and there is no AppArmor denial.
+Inside the guest, `/sys/firmware/qemu_fw_cfg/` is **empty**: no `by_name`, not
+even `rev`, with the driver built in. Both an RHCOS 5.14 kernel and an
+AlmaLinux 6.12 kernel on the same host see the same nothing, so it is the host
+that cannot present the interface. Ignition reports:
+
+```
+ignition[687]: QEMU firmware config was not found. Ignoring...
+```
+
+and the node boots with no configuration at all. Passing the same argument
+through `<qemu:commandline>` instead changes nothing, because the delivery form
+was never the problem.
+
+A config drive avoids the question entirely: it is an ordinary ISO on an
+ordinary SATA cdrom, and a guest that can read a CD can read its Ignition.
+
+**The lesson worth keeping:** an earlier probe proved that libvirt *emits* the
+right fw_cfg XML and treated that as proof the mechanism worked. It is not the
+same claim. "The provider generates correct XML" and "the guest receives the
+config" are two different things, and only the second one matters. Probe to the
+point where the guest reports success, not to the point where the host looks
+correct.
+
+### Switching back
+
+```hcl
+ignition_delivery  = "fw_cfg"
+rhcos_image_url    = ".../rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
+rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
+```
+
+Worth doing on a host with a newer QEMU: it drops the ISO, the staging
+directory and the `genisoimage` dependency. Check it first with one node and
+read the console — `fetched user config` means yes, `no config provided by
+user` means no.
 
 ## Three versions, and why they disagree
 
@@ -117,11 +193,12 @@ Terraform, and libvirtd reads it from that path when the domain starts. A
 remote `qemu+ssh://` URI puts the file on the wrong machine. It also means a
 host reboot between `apply` and a node's first boot loses the file: re-apply.
 
-**Ignition reaches the guest through fw_cfg**, as
-`<sysinfo type='fwcfg'><entry name='opt/com.coreos/config' file='...'/></sysinfo>`.
-The provider's schema marks `value` required; set it to `""` and it is dropped
-from the XML when `file` is present. Nothing has to be served over HTTP, which
-is the part of the bare-metal UPI procedure this replaces.
+**Ignition delivery is a choice, and the default is not the obvious one.**
+See "How Ignition reaches a node" above: `fw_cfg` is tidier and is what the
+provider documents, but it depends on the host's QEMU exposing an interface
+that QEMU 6.2 on Ubuntu 22.04 does not. `config-drive` is the default because
+it works on any host. Either way nothing is served over HTTP, which is the part
+of the bare-metal UPI procedure this replaces.
 
 **`master.ign` and `worker.ign` are pointer configs**, about 2 KB, aimed at
 `api-int:22623`. Only `bootstrap.ign` is self-contained, at around 300 KB. The

@@ -18,7 +18,7 @@ pool = "default"
 # ── cluster ─────────────────────────────────────────────────────────────────
 cluster_name = "ocp"
 base_domain  = "serra.pw"
-ocp_version  = "4.22.19"
+ocp_version  = "4.22.18"
 
 # From https://console.redhat.com/openshift/install/pull-secret - a free
 # Red Hat account is enough. Keep it on one line.
@@ -72,7 +72,7 @@ upstream_dns = ["1.1.1.1", "8.8.8.8"]
 
 # ── images ──────────────────────────────────────────────────────────────────
 # The bootimage only has to boot; the machine-config operator replaces it with
-# the payload's own RHCOS on first boot. 4.22.19 ships RHCOS 10.2.
+# the payload's own RHCOS on first boot. 4.22.18 ships RHCOS 10.2.
 rhcos_image_url    = "https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.22/4.22.8/rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
 rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
 

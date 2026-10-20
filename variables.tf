@@ -27,7 +27,7 @@ variable "base_domain" {
 }
 
 variable "ocp_version" {
-  description = "OpenShift release to install, e.g. \"4.22.19\". Pins openshift-install and oc."
+  description = "OpenShift release to install, e.g. \"4.22.18\". Pins openshift-install and oc."
   type        = string
 }
 

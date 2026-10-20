@@ -93,7 +93,7 @@ to it - and no config is re-rendered at the most fragile moment of the install.
 
 **The bootimage is not what ends up running.** RHCOS 4.22.8 boots the machines;
 the machine-config operator then replaces it with the release payload's own
-RHCOS - 10.2, i.e. RHEL 10 based, for 4.22.19.
+RHCOS - 10.2, i.e. RHEL 10 based, for 4.22.18.
 
 ## Where the cluster's DNS lives
 

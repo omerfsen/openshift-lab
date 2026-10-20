@@ -71,8 +71,10 @@ services_ip = "192.168.122.60"
 upstream_dns = ["1.1.1.1", "8.8.8.8"]
 
 # ── images ──────────────────────────────────────────────────────────────────
-# The bootimage only has to boot; the machine-config operator replaces it with
-# the payload's own RHCOS on first boot. 4.22.18 ships RHCOS 10.2.
+# 4.22.8, not 4.22.18 - bootimages are versioned separately and 4.22.8 is the
+# NEWEST one the 4.22 stream has (4.22.18 does not exist). The installer pins
+# it by checksum under yet another name, 9.8.20260715-1. See README.md,
+# "Three versions, and why they disagree", before changing this.
 rhcos_image_url    = "https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.22/4.22.8/rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
 rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
 

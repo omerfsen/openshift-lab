@@ -62,6 +62,53 @@ A compact three-node cluster is the default: three control plane nodes, no
 workers, `masters_schedulable = true`. Add `worker` entries to `nodes` and set
 `masters_schedulable = false` for a standard layout.
 
+## Three versions, and why they disagree
+
+An install involves three RHCOS/OpenShift version numbers that look like they
+should match and never do:
+
+| | version here | what it is |
+|---|---|---|
+| installer and payload | **4.22.18** | the release being installed - `ocp_version` |
+| **bootimage** | **4.22.8** | what the machines first boot - `rhcos_image_url` |
+| machine-os | **10.2.20261006-0** | what every node actually ends up running |
+
+**The bootimage is not versioned with the payload.** Red Hat publishes
+bootimages on their own cadence, and the whole 4.22 stream has exactly two:
+
+```
+rhcos/4.22/          ->  4.22.0/   4.22.8/
+rhcos/4.22/4.22.18/  ->  HTTP 404, there is no such thing
+rhcos/latest/        ->  rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz
+```
+
+So 4.22.8 is not a stale pin, it is the newest bootimage that exists. Do not
+go looking for one that matches `ocp_version`; it will not be there.
+
+**Confirm it by checksum, not by name.** The installer states which bootimage
+it expects, under a different naming scheme again - the RHEL stream version:
+
+```bash
+openshift-install coreos print-stream-json | jq -r '.architectures.x86_64.artifacts.qemu'
+#   release: 9.8.20260715-1
+#   sha256:  b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904
+```
+
+That digest is the same one `rhcos/4.22/4.22.8/sha256sum.txt` lists for
+`rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz`. One artifact, three names:
+`4.22.8` on the OCP mirror, `9.8.20260715-1` in the stream metadata, and
+RHEL 9.8 underneath. `rhcos_image_sha256` pins exactly that file, which is why
+the variable exists.
+
+**And it is thrown away almost immediately.** The bootimage only has to boot
+far enough to run Ignition. The machine-config operator then writes the
+payload's own machine-os to every node - 10.2, RHEL 10 based - on first boot.
+A node spends minutes on RHEL 9.8 and the rest of its life on RHEL 10.2, which
+is why a bootimage ten patch releases "behind" costs nothing.
+
+If you bump `ocp_version`, re-run the `print-stream-json` check above before
+assuming the bootimage URL still applies.
+
 ## Things that will catch you
 
 **This stack has to run on the hypervisor.** `libvirt_ignition` writes the

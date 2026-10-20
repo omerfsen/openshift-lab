@@ -44,8 +44,15 @@ resource "local_sensitive_file" "install_config" {
     fips                 = var.fips
     master_replicas      = local.node_count["master"]
     worker_replicas      = local.node_count["worker"]
-    pull_secret          = var.pull_secret
-    ssh_key              = join("\n", var.ssh_authorized_keys)
+    # jsonencode, not the raw value: the pull secret starts with '{', and YAML
+    # reads that as a flow mapping rather than a string. Quoting it makes it a
+    # scalar. trimspace because a trailing newline from the file would land
+    # inside the quotes.
+    pull_secret = jsonencode(trimspace(var.pull_secret))
+    # Two spaces, because every line after the first in the `sshKey: |` block
+    # has to be indented to stay inside it. The first line's indent comes from
+    # the template.
+    ssh_key = join("\n  ", var.ssh_authorized_keys)
   })
 }
 

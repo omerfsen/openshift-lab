@@ -1,16 +1,240 @@
-# OpenShift on KVM/libvirt, user-provisioned
+# OpenShift test lab on KVM/libvirt
 
-Builds a full OpenShift cluster on a single libvirt host with Terraform: the
-machines, the network they sit on, the DNS and the load balancer the installer
-refuses to create for you, and the install itself.
+A current OpenShift cluster on one libvirt host, built by Terraform: the
+machines, the network, the DNS and load balancer the installer refuses to
+create, and the install itself. Roughly 25 minutes from `apply` to a working
+console, and all of it comes back out with `terraform destroy`.
+
+Built and verified end to end on 2026-10-20.
+
+## Versions
+
+| | version | note |
+|---|---|---|
+| **OpenShift** | **4.22.18** | `ocp_version` |
+| RHCOS bootimage | **4.22.8** | `rhcos_image_url` - not a typo, see [Three versions](#three-versions-and-why-they-disagree) |
+| machine-os the nodes end up on | 10.2 (RHEL 10.2) | written by the machine-config operator on first boot |
+| Terraform | >= 1.16 (tested 1.16.5) | |
+| `dmacvicar/libvirt` | ~> 0.9.9 | 0.9 is a redesign of the 0.8 schema |
+| libvirt / QEMU on the host | 8.0 / 6.2 | the QEMU version matters, see [How Ignition reaches a node](#how-ignition-reaches-a-node) |
+
+### Checking for a newer OpenShift
+
+Ask the update graph, not the mirror's directory listing. The mirror publishes
+builds that are in **no channel** - installing one leaves a cluster with no
+upgrade path, and the build can be withdrawn:
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # edit: pull secret, ssh key, sizing
-terraform init && terraform apply              # bootstrap + control plane come up
-# ... wait-for bootstrap-complete passes ...
-#     set destroy_bootstrap = true
-terraform apply                                # bootstrap is removed, install finishes
+curl -sH 'Accept: application/json' \
+  'https://api.openshift.com/api/upgrades_info/v1/graph?channel=stable-4.22' |
+  jq -r '[.nodes[].version] | sort_by(split(".")|map(tonumber)) | last'
 ```
+
+Set `ocp_version` to what that prints. The **bootimage follows its own
+cadence** and will not match - check which one the installer actually wants:
+
+```bash
+openshift-install coreos print-stream-json |
+  jq -r '.architectures.x86_64.artifacts.qemu.formats["qcow2.gz"].disk | .location, .sha256'
+```
+
+and put those two values in `rhcos_image_url` and `rhcos_image_sha256`. For the
+`config-drive` delivery take the **openstack** artifact instead of `qemu`; a
+precondition refuses to build if the pair disagrees.
+
+## Step by step
+
+### 1. Check the host can take it
+
+| | this lab | why |
+|---|---|---|
+| RAM | **64 GiB free** while bootstrapping, 48 after | 16 GiB per control plane node is OpenShift's floor; below it the install does not fail, it just never converges |
+| disk | ~110 GiB at peak in the libvirt pool | thin overlays, but they grow as operators land |
+| CPU | 4 vCPU per node | |
+| tools | `terraform`, `genisoimage`, `virsh`, `curl`, `jq` | |
+
+```bash
+free -g; df -h /var/lib/libvirt/images; virsh net-list
+```
+
+The bootstrap node is temporary - it is destroyed in step 7 - so if RAM is
+tight, shrink it rather than the masters:
+
+```hcl
+role_defaults = {
+  bootstrap = { memory = 10240, vcpu = 4, disk_size = 120 }   # transient
+  master    = { memory = 16384, vcpu = 4, disk_size = 120 }   # leave this alone
+  worker    = { memory = 8192, vcpu = 2, disk_size = 120 }
+}
+```
+
+### 2. Get a pull secret
+
+From <https://console.redhat.com/openshift/install/pull-secret> - a free Red Hat
+account, no subscription. Save it somewhere outside the repo:
+
+```bash
+install -m 600 /dev/null ~/pull-secret.json
+# paste into it
+jq -r '.auths | keys[]' ~/pull-secret.json     # expect 4 registries
+```
+
+### 3. Pick a network
+
+Two options, and joining an existing one is usually right:
+
+```hcl
+create_network       = false              # join a network that already exists
+network_name         = "default"
+machine_network_cidr = "192.168.122.0/24"
+gateway_ip           = "192.168.122.1"
+```
+
+Joining means no route to publish, no `virsh net-edit` (which needs a network
+restart and drops every VM on that bridge), and `destroy` never touches a
+network it did not create. Set `create_network = true` with its own CIDR to
+have this stack build and own one instead.
+
+Pick addresses outside the network's DHCP range, and check nothing answers:
+
+```bash
+virsh net-dumpxml default | grep -A2 '<dhcp>'
+for i in 39 40 41 42 60; do ping -c1 -W1 192.168.122.$i >/dev/null && echo ".$i IN USE"; done
+```
+
+A defined-but-stopped VM claims its address the moment it starts, so check
+`virsh list --all`, not just what replies today.
+
+### 4. Create the DNS records
+
+Three records, all pointing at `services_ip` - the load balancer, **never** at
+a master. During bootstrapping the API backend includes the bootstrap node,
+which is the whole reason the load balancer exists.
+
+| record | type | value |
+|---|---|---|
+| `api.<cluster>.<base_domain>` | A | services_ip |
+| `api-int.<cluster>.<base_domain>` | A | services_ip |
+| `*.apps.<cluster>.<base_domain>` | A | services_ip |
+
+After step 5 you can generate them from the config, so they cannot drift from
+the addresses the machines actually get:
+
+```bash
+terraform output -raw bind_zone > ocp.zone     # importable at most DNS providers
+```
+
+Two traps, both of which cost an afternoon here:
+
+- **An `NS` record for the subdomain shadows every record beneath it.** If you
+  once delegated `ocp.example.com` to a helper node, the A records you add at
+  the provider are ignored and every lookup SERVFAILs. Delete the NS records.
+- An `NS` must point at a name with an **A record**, never a CNAME (RFC 2181),
+  and never at an RFC1918 address if the internet has to resolve it.
+
+Verify from outside your own resolver before going further:
+
+```bash
+dig +short api.ocp.example.com @1.1.1.1
+dig +short anything.apps.ocp.example.com @1.1.1.1
+```
+
+### 5. Write terraform.tfvars
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+chmod 600 terraform.tfvars        # it will hold the pull secret
+```
+
+Every variable is required - none carries a default, so a value you forget
+fails at plan time rather than taking one buried in the code. The ones that
+always need changing: `cluster_name`, `base_domain`, `pull_secret`,
+`ssh_authorized_keys`, the addresses in `nodes`, `services_ip`, and `pool`.
+
+```bash
+terraform init
+terraform plan        # ~24 resources on a compact cluster
+```
+
+### 6. Build it
+
+```bash
+terraform apply
+```
+
+In order: the bootimage is fetched and decompressed once, a base volume is
+uploaded, the services VM comes up with haproxy, `openshift-install` generates
+the Ignition configs, four machines boot, and Terraform waits for
+`bootstrap-complete`. About 20 minutes.
+
+Watch it from three angles:
+
+```bash
+virsh console bootstrap                       # Ctrl-] to exit
+curl -s 'http://<services_ip>:9000/;csv' | cut -d, -f1,2,18   # haproxy backends
+du -h /var/lib/libvirt/images/master0.qcow2   # a node that is working, grows
+```
+
+The one line that matters on a node's console is the Ignition verdict:
+
+```
+Ignition: user-provided config was applied     <- good
+Ignition: no config provided by user           <- it booted with nothing; see below
+```
+
+### 7. Remove the bootstrap node
+
+Once `bootstrap-complete` passes - this is the single manual gate a
+user-provisioned install leaves you:
+
+```hcl
+destroy_bootstrap = true
+```
+
+```bash
+terraform apply       # removes the bootstrap machine, then waits for install-complete
+```
+
+It frees its RAM, and the installer prints the console URL and the `kubeadmin`
+password when it finishes.
+
+### 8. Log in
+
+```bash
+export KUBECONFIG=<work_dir>/install/auth/kubeconfig
+oc get clusterversion        # Available=True means done
+oc get co                    # expect all Available, none Degraded
+```
+
+Console at `https://console-openshift-console.apps.<cluster>.<base_domain>`,
+user `kubeadmin`, password in `<work_dir>/install/auth/kubeadmin-password`.
+Full detail, including the HSTS trap, in [Getting in](#getting-in).
+
+To merge it into an existing `~/.kube/config` rather than overwrite it:
+
+```bash
+cp ~/.kube/config ~/.kube/config.bak
+cp <work_dir>/install/auth/kubeconfig /tmp/new-kc
+oc --kubeconfig /tmp/new-kc config rename-context admin ocp-lab
+KUBECONFIG=~/.kube/config:/tmp/new-kc oc config view --flatten > /tmp/merged
+mv /tmp/merged ~/.kube/config && chmod 600 ~/.kube/config && rm /tmp/new-kc
+oc config use-context ocp-lab
+```
+
+### 9. Tear it down
+
+```bash
+terraform destroy
+```
+
+Takes the machines, the volumes, the services VM, and the network if this stack
+created it. `work_dir` survives on purpose - it holds the kubeconfig and the
+kubeadmin password, so delete it deliberately. The DNS records are yours too.
+
+## Reference
+
+Everything below is the why behind the steps above - read it when something
+behaves oddly, or before changing a default.
 
 ## What a user-provisioned install actually asks of you
 

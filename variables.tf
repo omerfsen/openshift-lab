@@ -194,6 +194,14 @@ variable "nodes" {
     `ip` is required - UPI on libvirt has no DHCP, every node is addressed
     statically through its Ignition config. Everything else falls back to the
     per-role defaults below.
+
+    `mac` overrides the address derived from the node name. Leave it out unless
+    something outside this stack already knows the number - a DHCP reservation,
+    a switch ACL, an inventory.
+
+    `enabled = false` keeps an entry without building it: no machine, no disks,
+    no DNS record. Workers ship written and disabled, so turning one on is a
+    single word rather than a design exercise. Defaults to true.
   EOT
   type = map(object({
     role      = string
@@ -201,7 +209,14 @@ variable "nodes" {
     memory    = optional(number)
     vcpu      = optional(number)
     disk_size = optional(number)
+    mac       = optional(string, "")
+    enabled   = optional(bool, true)
   }))
+
+  validation {
+    condition     = alltrue([for n in var.nodes : n.mac == "" || can(regex("^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", n.mac))])
+    error_message = "A node's mac must be six colon-separated hex pairs, e.g. 52:54:00:ab:cd:ef."
+  }
 
   validation {
     condition     = alltrue([for n in var.nodes : contains(["bootstrap", "master", "worker"], n.role)])
@@ -209,12 +224,12 @@ variable "nodes" {
   }
 
   validation {
-    condition     = length([for n in var.nodes : n if n.role == "bootstrap"]) == 1
+    condition     = length([for n in var.nodes : n if n.role == "bootstrap" && n.enabled]) == 1
     error_message = "Exactly one bootstrap node is required; destroy it with destroy_bootstrap once bootstrapping finishes."
   }
 
   validation {
-    condition     = contains([1, 3], length([for n in var.nodes : n if n.role == "master"]))
+    condition     = contains([1, 3], length([for n in var.nodes : n if n.role == "master" && n.enabled]))
     error_message = "A cluster needs 1 or 3 control plane nodes."
   }
 }

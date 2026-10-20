@@ -152,6 +152,76 @@ Ignition: user-provided config was applied
 
 It costs a few seconds per first boot and nothing else.
 
+## Adding a worker
+
+A compact cluster has none: `masters_schedulable = true` removes the control
+plane taint and the masters run the workloads. That is a supported topology and
+the right one for a lab - three fewer machines, and on a host with 59 GiB free
+it was the difference between fitting and not.
+
+Workers ship **written and disabled**, so adding one is a word:
+
+```hcl
+"worker0" = { role = "worker", ip = "192.168.122.50", enabled = true }
+```
+
+then `terraform apply`. Start with `worker0` alone; it exercises the whole path
+for the cost of one machine.
+
+**Then approve its certificates.** This is the step a cloud does for you and
+UPI does not. A new node submits two CSRs - one to join, one for its kubelet
+serving certificate - and nothing signs them automatically:
+
+```bash
+oc get csr -o name | xargs oc adm certificate approve     # client CSR, node appears
+oc get csr -o name | xargs oc adm certificate approve     # serving CSR, a minute later
+oc get nodes
+```
+
+Run it twice, a minute apart: the second CSR only exists once the first is
+approved and the node has registered. A worker stuck `NotReady`, or absent from
+`oc get nodes` entirely, is almost always an unapproved CSR rather than a
+broken machine.
+
+Once workers carry the load you can give the control plane back to itself:
+
+```hcl
+masters_schedulable = false
+```
+
+That reinstates the taint and evicts workloads from the masters, so only do it
+with somewhere for them to go.
+
+### What `enabled` does and does not do
+
+`enabled = false` leaves the entry in `nodes` but builds nothing: no domain, no
+disks, no config drive, no DNS record in the generated zone. It is not a
+power switch - a machine that already exists is **destroyed** when you disable
+it. To stop a node without losing it, use `virsh shutdown`.
+
+Validations count only enabled nodes, so the 1-or-3 control plane rule and the
+exactly-one-bootstrap rule describe the cluster that will actually exist.
+
+### Choosing MAC addresses
+
+Every node's MAC is derived from its name, deterministically, in one place -
+`modules/node/main.tf`, `local.mac`. The same value goes into the domain's NIC
+and into the Ignition NetworkManager keyfile, which matches on it, so the two
+can never disagree.
+
+Deriving rather than randomising means a node keeps its address across a
+destroy and rebuild, so anything keyed to it - a DHCP reservation, a firewall
+rule, a switch ACL - keeps working.
+
+Override it per node when something outside this stack already owns the number:
+
+```hcl
+"master0" = { role = "master", ip = "192.168.122.40", mac = "52:54:00:ab:cd:ef" }
+```
+
+Keep the `52:54:00` prefix: it is QEMU's registered range, and straying outside
+it risks colliding with real hardware on a bridged network.
+
 ## How Ignition reaches a node
 
 RHCOS has no cloud-init. Everything a node is — its hostname, its address, its
@@ -282,6 +352,16 @@ config to `/tmp/terraform-provider-libvirt-ignition/` on the machine running
 Terraform, and libvirtd reads it from that path when the domain starts. A
 remote `qemu+ssh://` URI puts the file on the wrong machine. It also means a
 host reboot between `apply` and a node's first boot loses the file: re-apply.
+
+**A post-install apply must be a no-op, and that takes care.**
+`openshift-install create ignition-configs` *deletes* `install-config.yaml`.
+Written inside `install_dir`, Terraform would see its own file missing on every
+later plan, recreate it, and - because a new resource's `content_sha256` is
+unknown at plan time - cascade into replacing the Ignition configs and
+overwriting `auth/kubeconfig` with credentials that no longer match the running
+cluster. So it is written one directory up and copied in. If a plan ever wants
+to replace `terraform_data.ignition` on a healthy cluster, stop and find out
+why before applying.
 
 **Ignition delivery is a choice, and the default is not the obvious one.**
 See "How Ignition reaches a node" above: `fw_cfg` is tidier and is what the

@@ -1,8 +1,14 @@
 locals {
-  # A deterministic MAC in the QEMU 52:54:00 range. The NetworkManager keyfile
-  # matches the NIC by address, because the name RHCOS gives a virtio NIC is
-  # not something this module can promise across machine types.
-  mac = join(":", [
+  # The NetworkManager keyfile matches the NIC by address, because the name
+  # RHCOS gives a virtio NIC is not something this module can promise across
+  # machine types. So the domain and the Ignition config must agree on one MAC,
+  # and this local is the single place that decides it.
+  #
+  # Derived from the node name by default - deterministic, so the same node
+  # keeps its address across a destroy and rebuild, and anything keyed on it
+  # (a DHCP reservation, a firewall rule) keeps working. var.mac overrides it
+  # when something outside this stack already owns the number.
+  mac = var.mac != "" ? lower(var.mac) : join(":", [
     "52", "54", "00",
     substr(md5(var.name), 0, 2),
     substr(md5(var.name), 2, 2),

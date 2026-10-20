@@ -109,9 +109,26 @@ work_dir = "/data/vms/openshift-upi/ocp"
 # record it needs. Keep them matching what the zone already says.
 nodes = {
   "bootstrap" = { role = "bootstrap", ip = "192.168.122.39" }
-  "master0"   = { role = "master", ip = "192.168.122.40" }
-  "master1"   = { role = "master", ip = "192.168.122.41" }
-  "master2"   = { role = "master", ip = "192.168.122.42" }
+
+  # mac is optional on every node. Left out, it is derived from the node name
+  # and is stable across a destroy and rebuild. Set it when something else
+  # already knows the number - a DHCP reservation, a switch ACL, an inventory.
+  # master0 shows the form; the other two take the derived address.
+  #
+  # Control plane nodes carry no `enabled`: a cluster is 1 or 3 masters and a
+  # validation enforces it, so there is nothing to switch off.
+  "master0" = { role = "master", ip = "192.168.122.40", mac = "52:54:00:ab:cd:ef" }
+  "master1" = { role = "master", ip = "192.168.122.41" }
+  "master2" = { role = "master", ip = "192.168.122.42" }
+
+  # Written, not built. A compact cluster runs everything on the control plane
+  # (masters_schedulable = true), which is the right shape for a lab and costs
+  # three fewer machines. Flip one to enabled = true and re-apply to add it -
+  # start with worker0 alone, it is the cheapest way to exercise the path.
+  # A new worker also needs its CSRs approved; see README.md, "Adding a worker".
+  "worker0" = { role = "worker", ip = "192.168.122.50", enabled = false }
+  "worker1" = { role = "worker", ip = "192.168.122.51", enabled = false }
+  "worker2" = { role = "worker", ip = "192.168.122.52", enabled = false }
 }
 
 # OpenShift 4.22 wants 16 GiB and 4 vCPU on a control plane node. Below that

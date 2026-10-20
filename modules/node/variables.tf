@@ -34,6 +34,11 @@ variable "ignition_base" {
   sensitive   = true
 }
 
+variable "mac" {
+  description = "MAC for the primary NIC. Empty string derives one deterministically from the node name. Set it when something outside this stack already knows the address - a DHCP reservation, a switch ACL, a bare-metal BMC inventory."
+  type        = string
+}
+
 variable "ip" {
   description = "Static address, without a prefix."
   type        = string

@@ -18,6 +18,7 @@ module "node" {
   network          = local.network
   ignition_base    = data.local_file.ignition[each.value.role].content
 
+  mac        = each.value.mac
   ip         = each.value.ip
   prefix     = local.prefix
   gateway    = var.gateway_ip

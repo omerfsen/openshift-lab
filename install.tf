@@ -27,10 +27,14 @@ resource "terraform_data" "tools" {
   }
 }
 
-# install-config.yaml is consumed and DELETED by `create ignition-configs`, so
-# it is written fresh into a scratch directory on every run rather than kept.
+# install-config.yaml is CONSUMED by `create ignition-configs` - the installer
+# deletes it. So Terraform writes it one directory up, outside install_dir, and
+# the step below copies it in. Writing it where the installer can eat it makes
+# every later plan want to recreate it, which cascades into regenerating the
+# Ignition configs and overwriting auth/kubeconfig with credentials that no
+# longer match the running cluster.
 resource "local_sensitive_file" "install_config" {
-  filename        = "${local.install_dir}/install-config.yaml"
+  filename        = "${var.work_dir}/install-config.yaml"
   file_permission = "0600"
 
   content = templatefile("${path.module}/templates/install-config.yaml.tftpl", {
@@ -43,7 +47,11 @@ resource "local_sensitive_file" "install_config" {
     network_type         = var.network_type
     fips                 = var.fips
     master_replicas      = local.node_count["master"]
-    worker_replicas      = local.node_count["worker"]
+    # Always 0, however many workers exist. A user-provisioned install owns its
+    # own machines; any other number makes the installer emit machinesets for a
+    # machine API that is not driving anything here, and the compute pool would
+    # then disagree with the machines this stack actually built.
+    worker_replicas = 0
     # jsonencode, not the raw value: the pull secret starts with '{', and YAML
     # reads that as a flow mapping rather than a string. Quoting it makes it a
     # scalar. trimspace because a trailing newline from the file would land
@@ -75,10 +83,10 @@ resource "terraform_data" "ignition" {
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-euo", "pipefail", "-c"]
     command     = <<-EOT
+      mkdir -p '${local.install_dir}'
       cd '${local.install_dir}'
-      # create ignition-configs eats install-config.yaml, so keep a copy for a
-      # re-run and for reading back what was actually installed.
-      cp -f install-config.yaml install-config.yaml.bak
+      # The installer eats its copy; Terraform's stays put one level up.
+      cp -f '${local_sensitive_file.install_config.filename}' install-config.yaml
       '${local.installer}' create manifests --dir .
       # A compact cluster has no workers, so the control plane has to be
       # schedulable or nothing can be placed. The installer defaults this to

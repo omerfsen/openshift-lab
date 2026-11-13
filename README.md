@@ -7,6 +7,10 @@ console, and all of it comes back out with `terraform destroy`.
 
 Built and verified end to end on 2026-11-13, including a full destroy and rebuild.
 
+Coming from 4.x? [OpenShift 4 vs 5](Openshift-4vs5.md) covers what changed
+between 4.22.22 and 5.0.1 - the node OS move to RHCOS 10, `os_image_stream`,
+and the rest - and what it meant for this lab.
+
 ## Versions
 
 | | version | note |
@@ -578,7 +582,8 @@ RHEL major - a bootimage a few builds "behind" still costs nothing.
 
 That was not true on 4.22. There the installer defaulted to RHEL 9 everywhere:
 `osImageStream` was a Technology Preview field, so a 4.22 cluster booted 9.8 and
-stayed on RHCOS 9. The `openshift-4.22.22` tag of this repo is that version.
+stayed on RHCOS 9. The `openshift-4.22.22` tag of this repo is that version;
+[OpenShift 4 vs 5](Openshift-4vs5.md) has the full comparison.
 
 If you bump `ocp_version`, the `bootimage_check` re-runs; if it fails, list the
 right bootimage with the command above.

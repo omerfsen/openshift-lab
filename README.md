@@ -11,10 +11,10 @@ Built and verified end to end on 2026-10-20.
 
 | | version | note |
 |---|---|---|
-| **OpenShift** | **4.22.18** | `ocp_version` |
-| RHCOS bootimage | **4.22.8** | `rhcos_image_url` - not a typo, see [Three versions](#three-versions-and-why-they-disagree) |
+| **OpenShift** | **4.22.22** | `ocp_version` |
+| RHCOS bootimage | **4.22.21** | `rhcos_image_url` - not a typo, see [Three versions](#three-versions-and-why-they-disagree) |
 | machine-os the nodes end up on | 10.2 (RHEL 10.2) | written by the machine-config operator on first boot |
-| Terraform | >= 1.16 (tested 1.16.5) | |
+| Terraform | >= 1.16 (tested 1.17.1) | |
 | `dmacvicar/libvirt` | ~> 0.9.9 | 0.9 is a redesign of the 0.8 schema |
 | libvirt / QEMU on the host | 8.0 / 6.2 | the QEMU version matters, see [How Ignition reaches a node](#how-ignition-reaches-a-node) |
 
@@ -275,7 +275,7 @@ instead of quietly taking one that was buried in the code.
 
 | | |
 |---|---|
-| Terraform | >= 1.16 (tested on 1.16.5) |
+| Terraform | >= 1.16 (tested on 1.17.1) |
 | Provider | `dmacvicar/libvirt` ~> 0.9.9 |
 | Hypervisor | libvirt with a storage pool; **Terraform must run on it** (see below) |
 | RAM | 16 GiB per control plane node plus 16 for bootstrap: **64 GiB** for a compact cluster while bootstrapping, 48 after |
@@ -513,8 +513,8 @@ correct.
 
 ```hcl
 ignition_delivery  = "fw_cfg"
-rhcos_image_url    = ".../rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz"
-rhcos_image_sha256 = "b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904"
+rhcos_image_url    = ".../rhcos-4.22.21-x86_64-qemu.x86_64.qcow2.gz"
+rhcos_image_sha256 = "ab18081d95d4a1550a3914d7c92a9c23fbd687fd01432ae8c7b2029783d9c33e"
 ```
 
 Worth doing on a host with a newer QEMU: it drops the ISO, the staging
@@ -529,20 +529,20 @@ should match and never do:
 
 | | version here | what it is |
 |---|---|---|
-| installer and payload | **4.22.18** | the release being installed - `ocp_version` |
-| **bootimage** | **4.22.8** | what the machines first boot - `rhcos_image_url` |
-| machine-os | **10.2.20261006-0** | what every node actually ends up running |
+| installer and payload | **4.22.22** | the release being installed - `ocp_version` |
+| **bootimage** | **4.22.21** | what the machines first boot - `rhcos_image_url` |
+| machine-os | **10.2** (RHEL 10.2) | what every node actually ends up running |
 
 **The bootimage is not versioned with the payload.** Red Hat publishes
 bootimages on their own cadence, and the whole 4.22 stream has exactly two:
 
 ```
-rhcos/4.22/          ->  4.22.0/   4.22.8/
-rhcos/4.22/4.22.18/  ->  HTTP 404, there is no such thing
-rhcos/latest/        ->  rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz
+rhcos/4.22/          ->  4.22.0/   4.22.8/   4.22.21/
+rhcos/4.22/4.22.22/  ->  HTTP 404, there is no such thing
+rhcos/latest/        ->  rhcos-4.22.21-x86_64-qemu.x86_64.qcow2.gz
 ```
 
-So 4.22.8 is not a stale pin, it is the newest bootimage that exists. Do not
+So 4.22.21 is not a stale pin, it is the newest bootimage that exists. Do not
 go looking for one that matches `ocp_version`; it will not be there.
 
 **Confirm it by checksum, not by name.** The installer states which bootimage
@@ -550,13 +550,13 @@ it expects, under a different naming scheme again - the RHEL stream version:
 
 ```bash
 openshift-install coreos print-stream-json | jq -r '.architectures.x86_64.artifacts.qemu'
-#   release: 9.8.20260715-1
-#   sha256:  b1c733a288f0980e527a492b6d604621545fe86aadc0189511964ee867a09904
+#   release: 9.8.20261026-0
+#   sha256:  ab18081d95d4a1550a3914d7c92a9c23fbd687fd01432ae8c7b2029783d9c33e
 ```
 
-That digest is the same one `rhcos/4.22/4.22.8/sha256sum.txt` lists for
-`rhcos-4.22.8-x86_64-qemu.x86_64.qcow2.gz`. One artifact, three names:
-`4.22.8` on the OCP mirror, `9.8.20260715-1` in the stream metadata, and
+That digest is the same one `rhcos/4.22/4.22.21/sha256sum.txt` lists for
+`rhcos-4.22.21-x86_64-qemu.x86_64.qcow2.gz`. One artifact, three names:
+`4.22.21` on the OCP mirror, `9.8.20261026-0` in the stream metadata, and
 RHEL 9.8 underneath. `rhcos_image_sha256` pins exactly that file, which is why
 the variable exists.
 
@@ -609,9 +609,9 @@ The documented procedure is to edit it out by hand. Leaving it listed reaches
 the same place: the health check fails, the backend goes DOWN, nothing is sent
 to it - and no config is re-rendered at the most fragile moment of the install.
 
-**The bootimage is not what ends up running.** RHCOS 4.22.8 boots the machines;
+**The bootimage is not what ends up running.** RHCOS 4.22.21 boots the machines;
 the machine-config operator then replaces it with the release payload's own
-RHCOS - 10.2, i.e. RHEL 10 based, for 4.22.18.
+RHCOS - 10.2, i.e. RHEL 10 based, for 4.22.22.
 
 ## Where the cluster's DNS lives
 

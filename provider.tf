@@ -1,7 +1,7 @@
 terraform {
   # A floor, not a pin. The Azure stack this was adapted from used "= 1.11.4",
   # which refuses to run under anything else, including every release since.
-  # Tested on 1.16.5.
+  # Tested on 1.17.1.
   required_version = ">= 1.16.0"
 
   required_providers {

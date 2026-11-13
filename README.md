@@ -5,15 +5,16 @@ machines, the network, the DNS and load balancer the installer refuses to
 create, and the install itself. Roughly 25 minutes from `apply` to a working
 console, and all of it comes back out with `terraform destroy`.
 
-Built and verified end to end on 2026-10-20.
+Built and verified end to end on 2026-11-13, including a full destroy and rebuild.
 
 ## Versions
 
 | | version | note |
 |---|---|---|
-| **OpenShift** | **4.22.22** | `ocp_version` |
-| RHCOS bootimage | **4.22.21** | `rhcos_image_url` - not a typo, see [Three versions](#three-versions-and-why-they-disagree) |
-| machine-os the nodes end up on | 10.2 (RHEL 10.2) | written by the machine-config operator on first boot |
+| **OpenShift** | **5.0.1** | `ocp_version` |
+| RHCOS stream | **rhel-10** | `os_image_stream` - RHCOS 10; `rhel-9` is also offered |
+| RHCOS bootimage | **5.0.0** | `rhcos_image_url` - not a typo, see [Three versions](#three-versions-and-why-they-disagree) |
+| machine-os the nodes end up on | 10.2.20261102-1 (RHEL 10.2) | written by the machine-config operator on first boot |
 | Terraform | >= 1.16 (tested 1.17.1) | |
 | `dmacvicar/libvirt` | ~> 0.9.9 | 0.9 is a redesign of the 0.8 schema |
 | libvirt / QEMU on the host | 8.0 / 6.2 | the QEMU version matters, see [How Ignition reaches a node](#how-ignition-reaches-a-node) |
@@ -26,21 +27,23 @@ upgrade path, and the build can be withdrawn:
 
 ```bash
 curl -sH 'Accept: application/json' \
-  'https://api.openshift.com/api/upgrades_info/v1/graph?channel=stable-4.22' |
+  'https://api.openshift.com/api/upgrades_info/v1/graph?channel=stable-5.0' |
   jq -r '[.nodes[].version] | sort_by(split(".")|map(tonumber)) | last'
 ```
 
 Set `ocp_version` to what that prints. The **bootimage follows its own
-cadence** and will not match - check which one the installer actually wants:
+cadence** and will not match, and on 5.x it is pinned per `os_image_stream` -
+check which one the installer actually wants for your stream:
 
 ```bash
-openshift-install coreos print-stream-json |
-  jq -r '.architectures.x86_64.artifacts.qemu.formats["qcow2.gz"].disk | .location, .sha256'
+openshift-install coreos print-stream-json --stream rhel-10 |
+  jq -r '.architectures.x86_64.artifacts.openstack.formats["qcow2.gz"].disk | .location, .sha256'
 ```
 
-and put those two values in `rhcos_image_url` and `rhcos_image_sha256`. For the
-`config-drive` delivery take the **openstack** artifact instead of `qemu`; a
-precondition refuses to build if the pair disagrees.
+and put those two values in `rhcos_image_url` and `rhcos_image_sha256`. That is
+the **openstack** artifact, which the default `config-drive` delivery needs; for
+`fw_cfg` take `qemu` instead. `terraform_data.bootimage_check` refuses to build
+if the image does not match the stream.
 
 ## Step by step
 
@@ -513,8 +516,8 @@ correct.
 
 ```hcl
 ignition_delivery  = "fw_cfg"
-rhcos_image_url    = ".../rhcos-4.22.21-x86_64-qemu.x86_64.qcow2.gz"
-rhcos_image_sha256 = "ab18081d95d4a1550a3914d7c92a9c23fbd687fd01432ae8c7b2029783d9c33e"
+rhcos_image_url    = ".../5.0-el10/5.0.0/rhcos-5.0.0-x86_64-qemu.x86_64.qcow2.gz"
+rhcos_image_sha256 = "2764d6703f3e361eea9dc2d9648ec71bb6cc97edea26436172d112e2a695ecda"
 ```
 
 Worth doing on a host with a newer QEMU: it drops the ISO, the staging
@@ -529,45 +532,56 @@ should match and never do:
 
 | | version here | what it is |
 |---|---|---|
-| installer and payload | **4.22.22** | the release being installed - `ocp_version` |
-| **bootimage** | **4.22.21** | what the machines first boot - `rhcos_image_url` |
-| machine-os | **10.2** (RHEL 10.2) | what every node actually ends up running |
+| installer and payload | **5.0.1** | the release being installed - `ocp_version` |
+| **bootimage** | **5.0.0** on the mirror, `10.2.20261026-0` to the installer | what the machines first boot - `rhcos_image_url` |
+| machine-os | **10.2.20261102-1** | what every node ends up running, from the payload |
 
 **The bootimage is not versioned with the payload.** Red Hat publishes
-bootimages on their own cadence, and the whole 4.22 stream has exactly two:
+bootimages on their own cadence, and only a few releases ever get one. For
+OpenShift 5 there is one so far, `5.0.0`, and it exists twice:
 
 ```
-rhcos/4.22/          ->  4.22.0/   4.22.8/   4.22.21/
-rhcos/4.22/4.22.22/  ->  HTTP 404, there is no such thing
-rhcos/latest/        ->  rhcos-4.22.21-x86_64-qemu.x86_64.qcow2.gz
+rhcos/5.0-el10/5.0.0/   ->  RHEL 10.2 (10.2.20261026-0)   <- the 5.x default, used here
+rhcos/5.0/5.0.0/        ->  RHEL 9.8  (9.8.20261026-0)    <- same files as rhcos/4.22/4.22.21/
+rhcos/5.0*/5.0.1/       ->  HTTP 404, there is no such thing
 ```
 
-So 4.22.21 is not a stale pin, it is the newest bootimage that exists. Do not
-go looking for one that matches `ocp_version`; it will not be there.
+So 5.0.0 is not a stale pin for a 5.0.1 cluster, it is the newest bootimage
+that exists. And the directory without `-el10` is not the 5.0 one you want: it
+is the RHEL 9.8 image 4.22 booted, published again under a new name. Another
+reason to compare digests, not names.
 
-**Confirm it by checksum, not by name.** The installer states which bootimage
-it expects, under a different naming scheme again - the RHEL stream version:
+**Which one is right depends on `os_image_stream`.** OpenShift 5 can run its
+nodes on RHCOS 10 (`rhel-10`, the default here) or RHCOS 9 (`rhel-9`), and the
+installer pins one bootimage per stream:
 
 ```bash
-openshift-install coreos print-stream-json | jq -r '.architectures.x86_64.artifacts.qemu'
-#   release: 9.8.20261026-0
-#   sha256:  ab18081d95d4a1550a3914d7c92a9c23fbd687fd01432ae8c7b2029783d9c33e
+openshift-install coreos print-stream-json --stream rhel-10 \
+  | jq -r '.architectures.x86_64.artifacts.openstack | .release, .formats["qcow2.gz"].disk.sha256'
+#   10.2.20261026-0
+#   87cb01806bb1b31b5e94960e743923d6d83683087dea8580165822abece73d61
 ```
 
-That digest is the same one `rhcos/4.22/4.22.21/sha256sum.txt` lists for
-`rhcos-4.22.21-x86_64-qemu.x86_64.qcow2.gz`. One artifact, three names:
-`4.22.21` on the OCP mirror, `9.8.20261026-0` in the stream metadata, and
-RHEL 9.8 underneath. `rhcos_image_sha256` pins exactly that file, which is why
-the variable exists.
+That digest is the one `rhcos/5.0-el10/5.0.0/sha256sum.txt` lists for
+`rhcos-5.0.0-x86_64-openstack.x86_64.qcow2.gz`. One artifact, three names:
+`5.0.0` on the OCP mirror, `10.2.20261026-0` in the stream metadata, and RHEL
+10.2 underneath. `rhcos_image_sha256` pins exactly that file, and
+`terraform_data.bootimage_check` runs the same lookup on every apply that
+changes the version, the stream or the checksum: a bootimage the installer does
+not list for that stream stops the apply before anything is downloaded.
 
-**And it is thrown away almost immediately.** The bootimage only has to boot
-far enough to run Ignition. The machine-config operator then writes the
-payload's own machine-os to every node - 10.2, RHEL 10 based - on first boot.
-A node spends minutes on RHEL 9.8 and the rest of its life on RHEL 10.2, which
-is why a bootimage ten patch releases "behind" costs nothing.
+**And it is replaced almost immediately.** The bootimage only has to boot far
+enough to run Ignition. The machine-config operator then writes the payload's
+own machine-os for the chosen stream to every node. On 5.0.1 with `rhel-10`
+that is 10.2.20261102-1, so the bootimage and the running OS are now the same
+RHEL major - a bootimage a few builds "behind" still costs nothing.
 
-If you bump `ocp_version`, re-run the `print-stream-json` check above before
-assuming the bootimage URL still applies.
+That was not true on 4.22. There the installer defaulted to RHEL 9 everywhere:
+`osImageStream` was a Technology Preview field, so a 4.22 cluster booted 9.8 and
+stayed on RHCOS 9. The `openshift-4.22.22` tag of this repo is that version.
+
+If you bump `ocp_version`, the `bootimage_check` re-runs; if it fails, list the
+right bootimage with the command above.
 
 ## Things that will catch you
 
@@ -609,9 +623,15 @@ The documented procedure is to edit it out by hand. Leaving it listed reaches
 the same place: the health check fails, the backend goes DOWN, nothing is sent
 to it - and no config is re-rendered at the most fragile moment of the install.
 
-**The bootimage is not what ends up running.** RHCOS 4.22.21 boots the machines;
+**The bootimage is not what ends up running.** RHCOS 5.0.0 boots the machines;
 the machine-config operator then replaces it with the release payload's own
-RHCOS - 10.2, i.e. RHEL 10 based, for 4.22.22.
+machine-os for `os_image_stream` - 10.2.20261102-1, RHEL 10 based, for 5.0.1 on
+`rhel-10`.
+
+**The bootimage has to match `os_image_stream`.** A RHEL 9.8 bootimage on a
+`rhel-10` cluster, or the reverse, is the 5.x way to waste an afternoon -
+`terraform_data.bootimage_check` catches it before anything downloads, but only
+if `os_image_stream` and the image you pinned actually agree.
 
 ## Where the cluster's DNS lives
 

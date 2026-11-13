@@ -1,5 +1,7 @@
 locals {
-  mirror_clients = "https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/${var.ocp_version}"
+  # openshift-v4/ or openshift-v5/, from the release's major version. The
+  # v4 tree also carries 5.x today, but v5 is where 5.x belongs.
+  mirror_clients = "https://mirror.openshift.com/pub/openshift-v${split(".", var.ocp_version)[0]}/x86_64/clients/ocp/${var.ocp_version}"
   tools_dir      = "${var.work_dir}/tools"
   install_dir    = "${var.work_dir}/install"
   installer      = "${local.tools_dir}/openshift-install"
@@ -46,6 +48,7 @@ resource "local_sensitive_file" "install_config" {
     service_network_cidr = var.service_network_cidr
     network_type         = var.network_type
     fips                 = var.fips
+    os_image_stream      = var.os_image_stream
     master_replicas      = local.node_count["master"]
     # Always 0, however many workers exist. A user-provisioned install owns its
     # own machines; any other number makes the installer emit machinesets for a
@@ -68,11 +71,14 @@ resource "local_sensitive_file" "install_config" {
 #
 # master.ign and worker.ign are ~2 KB pointer configs aimed at
 # api-int:22623; bootstrap.ign is the self-contained ~300 KB one. All three go
-# to the nodes through fw_cfg, so nothing has to be served over HTTP the way
-# the bare-metal UPI documentation assumes.
+# to the nodes on a config drive or through fw_cfg, so nothing has to be
+# served over HTTP the way the bare-metal UPI documentation assumes.
 #
-# The certificates inside bootstrap.ign expire 24 hours after generation. If an
-# install stalls past that, taint this resource rather than reusing the files.
+# The certificates inside bootstrap.ign expire 24 hours after generation. The
+# installer caches generated assets in .openshift_install_state.json and will
+# reuse those expired certs instead of regenerating, so a destroy-then-reinstall
+# (or an install that stalled past 24h) fails with "certificates expired". The
+# provisioner therefore wipes install_dir first and always generates fresh.
 resource "terraform_data" "ignition" {
   triggers_replace = [
     var.ocp_version,
@@ -83,6 +89,10 @@ resource "terraform_data" "ignition" {
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-euo", "pipefail", "-c"]
     command     = <<-EOT
+      # Start from an empty dir. The installer caches generated assets in
+      # .openshift_install_state.json and reuses them (including certs that
+      # expire after 24h) rather than regenerating, which breaks a reinstall.
+      rm -rf '${local.install_dir}'
       mkdir -p '${local.install_dir}'
       cd '${local.install_dir}'
       # The installer eats its copy; Terraform's stays put one level up.

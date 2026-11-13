@@ -27,7 +27,7 @@ variable "base_domain" {
 }
 
 variable "ocp_version" {
-  description = "OpenShift release to install, e.g. \"4.22.22\". Pins openshift-install and oc."
+  description = "OpenShift release to install, e.g. \"5.0.1\". Pins openshift-install and oc."
   type        = string
 }
 
@@ -156,8 +156,23 @@ variable "ignition_delivery" {
   }
 }
 
+variable "os_image_stream" {
+  description = <<-EOT
+    RHCOS stream every node runs: "rhel-10" (the OpenShift 5 default) or
+    "rhel-9". Written to install-config.yaml as osImageStream, and the
+    bootimage below must come from the same stream - a check asks the
+    installer and refuses a mismatch.
+  EOT
+  type        = string
+
+  validation {
+    condition     = contains(["rhel-10", "rhel-9"], var.os_image_stream)
+    error_message = "os_image_stream is \"rhel-10\" or \"rhel-9\"."
+  }
+}
+
 variable "rhcos_image_url" {
-  description = "RHCOS qemu qcow2 for the bootimage. The mirror serves it gzipped; it is decompressed before upload."
+  description = "RHCOS bootimage qcow2 (openstack or qemu, see ignition_delivery). The mirror serves it gzipped; it is decompressed before upload."
   type        = string
 }
 
@@ -235,7 +250,7 @@ variable "nodes" {
 }
 
 variable "role_defaults" {
-  description = "Per-role sizing applied to any node that does not set its own. OpenShift 4.22 wants 16 GiB and 4 vCPU on a control plane node."
+  description = "Per-role sizing applied to any node that does not set its own. A control plane node wants 16 GiB and 4 vCPU."
   type = map(object({
     memory    = number
     vcpu      = number

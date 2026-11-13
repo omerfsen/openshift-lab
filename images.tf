@@ -1,3 +1,32 @@
+# The bootimage has to belong to the OS stream the cluster is installed with:
+# RHEL 10 for rhel-10, RHEL 9 for rhel-9. The installer knows exactly which
+# files those are, by checksum, so this asks it rather than trusting a URL.
+# A mismatch fails here, before the 1.4 GB download, instead of as a node that
+# boots one RHEL and is told to become the other.
+resource "terraform_data" "bootimage_check" {
+  triggers_replace = [var.ocp_version, var.os_image_stream, var.rhcos_image_sha256]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-euo", "pipefail", "-c"]
+    command     = <<-EOT
+      if [[ -z '${var.rhcos_image_sha256}' ]]; then
+        echo "WARNING: rhcos_image_sha256 is empty, the bootimage is not checked against the installer"
+        exit 0
+      fi
+      if '${local.installer}' coreos print-stream-json --stream '${var.os_image_stream}' \
+          | grep -qF '"sha256":"${var.rhcos_image_sha256}"'; then
+        echo "bootimage is in the ${var.os_image_stream} stream of openshift-install ${var.ocp_version}"
+      else
+        echo "ERROR: rhcos_image_sha256 is not a bootimage in the ${var.os_image_stream} stream of openshift-install ${var.ocp_version}." >&2
+        echo "List the right ones with: openshift-install coreos print-stream-json --stream ${var.os_image_stream}" >&2
+        exit 1
+      fi
+    EOT
+  }
+
+  depends_on = [terraform_data.tools]
+}
+
 # The mirror serves the bootimage gzipped and libvirt cannot upload a .gz, so
 # it is fetched and decompressed once into a cache directory and uploaded from
 # there. The Azure stack did the same with curl + gunzip in a null_resource,
@@ -39,6 +68,8 @@ resource "terraform_data" "rhcos_image" {
       test -s '${local.rhcos_qcow2}'
     EOT
   }
+
+  depends_on = [terraform_data.bootimage_check]
 }
 
 locals {

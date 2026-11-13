@@ -9,6 +9,10 @@ metadata:
 platform:
   none: {}
 
+# Which RHCOS every node runs. 5.x defaults to rhel-10 when this is left out;
+# it is written out so the bootimage check and the cluster agree on purpose.
+osImageStream: ${os_image_stream}
+
 controlPlane:
   name: master
   replicas: ${master_replicas}
